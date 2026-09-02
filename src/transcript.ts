@@ -28,11 +28,28 @@ export interface AdvisorCursor {
 	expectedIndex: number;
 }
 
+/**
+ * Rendered bounded Advisor update plus observation metadata. Exported through
+ * `src/index.ts` (via `export * from "./transcript.js"`); adding
+ * `retainedEntryCount` is an intentional, additive public-API change (v0.4.x):
+ * text output is unchanged, and the extra field lets experiment harnesses and
+ * external callers observe how much Executor history a render setting admits
+ * without duplicating the budgeting logic.
+ */
 export interface RenderedAdvisorDelta {
 	text: string;
 	redactions: number;
 	entryCount: number;
 	truncated: boolean;
+	/**
+	 * Number of session entries scanned into the bounded window before overall
+	 * truncation (the newest-first retained tail). The entry that triggered
+	 * truncation is counted even though only part of its serialized content —
+	 * often a tail fragment — actually survives into the final text. Lets
+	 * callers observe how much Executor history a render setting admits
+	 * without duplicating the budgeting logic.
+	 */
+	retainedEntryCount: number;
 }
 
 export function cursorAtTail(branch: SessionEntry[]): AdvisorCursor {
@@ -256,19 +273,35 @@ interface BoundedText {
 function boundToolResult(text: string, maximumBytes: number): BoundedText {
 	let lineEnd = -1;
 	let searchFrom = 0;
-	for (let line = 0; line < MAX_ADVISOR_TOOL_RESULT_LINES; line++) {
-		lineEnd = text.indexOf("\n", searchFrom);
-		if (lineEnd === -1) break;
-		searchFrom = lineEnd + 1;
+	let found = 0;
+	for (; found < MAX_ADVISOR_TOOL_RESULT_LINES; found++) {
+		const next = text.indexOf("\n", searchFrom);
+		if (next === -1) break;
+		lineEnd = next;
+		searchFrom = next + 1;
 	}
-	const lineTruncated = lineEnd !== -1;
+	// The line cap binds only when the body genuinely has more than
+	// MAX_ADVISOR_TOOL_RESULT_LINES lines: all cap iterations must have found a
+	// newline AND content must follow the last consumed one. With fewer lines
+	// the scan breaks early (`found < cap`), and with exactly cap lines ending
+	// in a newline nothing follows the cap-th break — either way there is no
+	// tail to drop and appending the marker would claim a truncation that never
+	// happened.
+	const lineTruncated = found === MAX_ADVISOR_TOOL_RESULT_LINES && searchFrom < text.length;
+	// A trimmed body must actually shrink: the marker can be longer than a tiny
+	// dropped tail line, and a net-inflated "truncation" would waste budget
+	// while reporting `truncated: true`. Fall back to the raw text (which the
+	// byte cap below still bounds) when the line trim does not save bytes.
 	const lineBounded = lineTruncated
 		? `${text.slice(0, lineEnd)}${TOOL_RESULT_TRUNCATION_MARKER}`
 		: text;
-	const byteBounded = truncateUtf8Bytes(lineBounded, maximumBytes, TOOL_RESULT_TRUNCATION_MARKER);
+	const lineTrimShrinks =
+		!lineTruncated || Buffer.byteLength(lineBounded, "utf8") < Buffer.byteLength(text, "utf8");
+	const boundedSource = lineTrimShrinks ? lineBounded : text;
+	const byteBounded = truncateUtf8Bytes(boundedSource, maximumBytes, TOOL_RESULT_TRUNCATION_MARKER);
 	return {
 		text: byteBounded,
-		truncated: lineTruncated || byteBounded !== lineBounded,
+		truncated: (lineTrimShrinks && lineTruncated) || byteBounded !== boundedSource,
 	};
 }
 
@@ -279,7 +312,7 @@ function addTailTruncationMarker(text: string, maximumBytes: number, marker: str
 }
 
 function renderBoundedEntries(
-	entries: SessionEntry[],
+	entries: readonly SessionEntry[],
 	maximumTokens: number,
 	truncationMarker: string,
 	includeReasoning = true,
@@ -292,6 +325,7 @@ function renderBoundedEntries(
 	let hasRetainedEntry = false;
 	let overallTruncated = false;
 	let toolResultTruncated = false;
+	let retainedEntryCount = 0;
 
 	const projected = buildSessionProjection(entries).messages;
 	const system = getCurrentSystemMessage(projected);
@@ -334,6 +368,7 @@ function renderBoundedEntries(
 			retained = candidate;
 		}
 		hasRetainedEntry = true;
+		retainedEntryCount++;
 	}
 
 	return {
@@ -343,6 +378,7 @@ function renderBoundedEntries(
 		redactions,
 		entryCount: entries.length,
 		truncated: overallTruncated || toolResultTruncated,
+		retainedEntryCount,
 	};
 }
 
@@ -522,17 +558,32 @@ export function successfulMemoryToolTexts(
 	return new Set(newestFirst.reverse());
 }
 
+export interface RenderAdvisorDeltaOptions {
+	/**
+	 * Include Executor reasoning ("thinking") blocks in the rendered window.
+	 * Defaults to true (production behavior). When false, the freed budget
+	 * admits more Executor history under the same token ceiling; this is the
+	 * no-reasoning experience behind the `PI_ADVISOR_NO_REASONING` flag.
+	 */
+	includeReasoning?: boolean;
+	/**
+	 * Replace the recorded system message with the live effective system prompt.
+	 * When omitted, the snapshot's own system message is used.
+	 */
+	effectiveSystemPrompt?: string | undefined;
+}
+
 export function renderAdvisorDelta(
-	entries: SessionEntry[],
+	entries: readonly SessionEntry[],
 	maxUpdateTokens: number,
-	effectiveSystemPrompt?: string,
+	options: RenderAdvisorDeltaOptions = {},
 ): RenderedAdvisorDelta {
 	return renderBoundedEntries(
 		entries,
 		maxUpdateTokens,
 		UPDATE_TRUNCATION_MARKER,
-		true,
-		effectiveSystemPrompt,
+		options.includeReasoning ?? true,
+		options.effectiveSystemPrompt,
 	);
 }
 
@@ -540,15 +591,15 @@ export function renderAdvisorDelta(
  * Serialize a redacted, bounded current-branch snapshot for lifecycle and configuration Re-prime.
  */
 export function renderAdvisorReprimeSnapshot(
-	entries: SessionEntry[],
+	entries: readonly SessionEntry[],
 	maxReprimeTokens: number,
-	effectiveSystemPrompt?: string,
+	options: RenderAdvisorDeltaOptions = {},
 ): RenderedAdvisorDelta {
 	return renderBoundedEntries(
 		entries,
 		maxReprimeTokens,
 		REPRIME_TRUNCATION_MARKER,
-		true,
-		effectiveSystemPrompt,
+		options.includeReasoning ?? true,
+		options.effectiveSystemPrompt,
 	);
 }

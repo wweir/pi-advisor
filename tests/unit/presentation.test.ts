@@ -88,6 +88,8 @@ function runtimeStatus(): AdvisorRuntimeStatus {
 		compactionsCompleted: 1,
 		compactionFailures: 0,
 		compactionUsageUnavailable: 1,
+		historyCompressionsCompleted: 2,
+		nestedLossyCompressions: 0,
 		contextReprimesCompleted: 0,
 		contextReprimeFailures: 0,
 		sessionTokenSoftCap: "off",

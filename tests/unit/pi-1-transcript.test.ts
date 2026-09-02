@@ -51,13 +51,16 @@ describe("Pi 1.0 canonical Advisor evidence", () => {
 		manager.appendMessage({ role: "system", content: "CANONICAL-POLICY-NOT-SENT", timestamp: 1 });
 		const effective = "FORCED-CURRENT-POLICY\nAPI_KEY=forced-system-secret";
 		for (const render of [renderAdvisorDelta, renderAdvisorReprimeSnapshot]) {
-			const result = render(manager.getBranch(), 1_000, effective);
+			const result = render(manager.getBranch(), 1_000, { effectiveSystemPrompt: effective });
 			expect(result.text).toContain("FORCED-CURRENT-POLICY");
 			expect(result.text).toContain("[REDACTED]");
 			expect(result.text).not.toContain("forced-system-secret");
 			expect(result.text).not.toContain("CANONICAL-POLICY-NOT-SENT");
 			expect(
-				Buffer.byteLength(render(manager.getBranch(), 10, effective.repeat(100)).text),
+				Buffer.byteLength(
+					render(manager.getBranch(), 10, { effectiveSystemPrompt: effective.repeat(100) })
+						.text,
+				),
 			).toBeLessThanOrEqual(40);
 		}
 	});
