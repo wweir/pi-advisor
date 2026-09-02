@@ -756,6 +756,9 @@ export function mergeProjectConfiguration(
 				userConfig.context.maxUpdateTokens,
 				project.context?.maxUpdateTokens ?? userConfig.context.maxUpdateTokens,
 			),
+			historyCompressionCooldownTurns:
+				project.context?.historyCompressionCooldownTurns ??
+				userConfig.context.historyCompressionCooldownTurns,
 		},
 		limits,
 		security: {

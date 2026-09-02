@@ -36,6 +36,7 @@ import {
 	redactSecrets,
 	renderAdvisorDelta,
 	renderAdvisorReprimeSnapshot,
+	shouldDeferHistoryCompression,
 	successfulMemoryToolTexts,
 	takeRenderedPrefix,
 	type AdviceDedupeIdentity,
@@ -239,6 +240,9 @@ function runtimeStatus(): AdvisorRuntimeStatus {
 		compactionsCompleted: 0,
 		compactionFailures: 0,
 		compactionUsageUnavailable: 0,
+		historyCompressionsCompleted: 0,
+		historyCompressionDeferred: 0,
+		nestedLossyCompressions: 0,
 		contextReprimesCompleted: 0,
 		contextReprimeFailures: 0,
 		sessionTokenSoftCap: "off",
@@ -325,6 +329,105 @@ describe("Slice 1 configuration and emission policy", () => {
 		const normalized = normalizeAdvisorConfig(custom);
 		expect(normalized.review.adaptiveCadence.silentReviewsBeforeBackOff).toBe(8);
 		expect(normalized.review.adaptiveCadence.maxMinTurnsBetweenReviews).toBe(5);
+	});
+
+	it("defaults and normalizes the history-compression cooldown knob", () => {
+		expect(DEFAULT_ADVISOR_CONFIG.context.historyCompressionCooldownTurns).toBe(3);
+
+		const lowered = structuredClone(DEFAULT_ADVISOR_CONFIG);
+		lowered.context.historyCompressionCooldownTurns = 6;
+		const normalized = normalizeAdvisorConfig(lowered);
+		expect(normalized.context.historyCompressionCooldownTurns).toBe(6);
+
+		// Cooldown may be 0 (disable hysteresis).
+		const atBounds = structuredClone(DEFAULT_ADVISOR_CONFIG);
+		atBounds.context.historyCompressionCooldownTurns = 0;
+		const bounded = normalizeAdvisorConfig(atBounds);
+		expect(bounded.context.historyCompressionCooldownTurns).toBe(0);
+	});
+
+	it("deferral: cooldown suppresses compression within the margin, bypasses when over or stale", () => {
+		const limit = 100_000;
+		// Within margin + cooldown active -> defer (prefix cache re-accumulates).
+		expect(
+			shouldDeferHistoryCompression({
+				estimateTokens: 110_000,
+				contextLimitTokens: limit,
+				cooldownRemaining: 2,
+			}),
+		).toBe(true);
+		// Overage beyond the 1.15 margin -> compress despite cooldown.
+		expect(
+			shouldDeferHistoryCompression({
+				estimateTokens: 116_000,
+				contextLimitTokens: limit,
+				cooldownRemaining: 2,
+			}),
+		).toBe(false);
+		expect(
+			shouldDeferHistoryCompression({
+				estimateTokens: 150_000,
+				contextLimitTokens: limit,
+				cooldownRemaining: 2,
+			}),
+		).toBe(false);
+		// Cooldown expired -> compress even when just over.
+		expect(
+			shouldDeferHistoryCompression({
+				estimateTokens: 101_000,
+				contextLimitTokens: limit,
+				cooldownRemaining: 0,
+			}),
+		).toBe(false);
+		// Custom margin factor.
+		expect(
+			shouldDeferHistoryCompression({
+				estimateTokens: 200_000,
+				contextLimitTokens: limit,
+				cooldownRemaining: 1,
+				marginFactor: 2.5,
+			}),
+		).toBe(true);
+	});
+
+	it("deferral is capped by the provider hard window (maxFraction ~1 scenario)", () => {
+		const limit = 100_000; // e.g. contextWindow 108_192, maxFraction 1.0
+		// Margin alone would defer up to 115_000; hard ceiling 110_000 caps it.
+		expect(
+			shouldDeferHistoryCompression({
+				estimateTokens: 112_000,
+				contextLimitTokens: limit,
+				cooldownRemaining: 2,
+				hardCeilingTokens: 110_000,
+			}),
+		).toBe(false);
+		// At or under the hard ceiling (but over the soft limit) still defers.
+		expect(
+			shouldDeferHistoryCompression({
+				estimateTokens: 105_000,
+				contextLimitTokens: limit,
+				cooldownRemaining: 2,
+				hardCeilingTokens: 110_000,
+			}),
+		).toBe(true);
+		// Ceiling below the soft limit: any over-limit estimate compresses now.
+		expect(
+			shouldDeferHistoryCompression({
+				estimateTokens: 100_500,
+				contextLimitTokens: limit,
+				cooldownRemaining: 2,
+				hardCeilingTokens: 0,
+			}),
+		).toBe(false);
+		// A generous ceiling leaves margin-based deferral unchanged.
+		expect(
+			shouldDeferHistoryCompression({
+				estimateTokens: 110_000,
+				contextLimitTokens: limit,
+				cooldownRemaining: 2,
+				hardCeilingTokens: 500_000,
+			}),
+		).toBe(true);
 	});
 
 	it("floors a fractional Memory suggestion session cap", () => {

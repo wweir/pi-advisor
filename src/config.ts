@@ -14,6 +14,14 @@ export interface AdvisorContextConfig {
 	maxFraction: number;
 	reserveTokens: number;
 	maxUpdateTokens: number;
+	/**
+	 * Hysteresis: after a history compression rewrites the nested-session
+	 * prefix, suppress further compression for this many subsequent review
+	 * attempts (while the context is within the margin below), letting the
+	 * append-only prefix cache re-accumulate instead of being re-written every
+	 * turn. 0 disables the cooldown (compress whenever over limit). Default 3.
+	 */
+	historyCompressionCooldownTurns: number;
 }
 
 export type AdvisorSessionCap = number | "off";
@@ -132,6 +140,7 @@ const CANONICAL_DEFAULT_ADVISOR_CONFIG: AdvisorConfig = deepFreeze({
 		maxFraction: 0.65,
 		reserveTokens: 8_192,
 		maxUpdateTokens: 24_000,
+		historyCompressionCooldownTurns: 3,
 	},
 	limits: {
 		maxAdviceCharacters: 2_000,
@@ -145,7 +154,7 @@ const CANONICAL_DEFAULT_ADVISOR_CONFIG: AdvisorConfig = deepFreeze({
 		deferredAdviceRetentionHours: 24,
 		sessionTokenSoftCap: "off",
 		sessionCostSoftCapUsd: "off",
-		maxReviewAttemptMs: 120_000,
+		maxReviewAttemptMs: 180_000,
 		maxNestedCompactionMs: 60_000,
 		maxLifecycleAbortMs: 2_000,
 	},
@@ -286,6 +295,11 @@ export function normalizeAdvisorConfig(input: AdvisorConfig): AdvisorConfig {
 				merged.context.maxUpdateTokens,
 				1,
 				defaults.context.maxUpdateTokens,
+			),
+			historyCompressionCooldownTurns: finiteAtLeast(
+				merged.context.historyCompressionCooldownTurns,
+				0,
+				defaults.context.historyCompressionCooldownTurns,
 			),
 		},
 		limits: {

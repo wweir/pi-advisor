@@ -52,6 +52,12 @@ import {
 	type AdviseSchemaMode,
 } from "./compatibility/constrained-sampling.js";
 import { isMemorySuggestionBasis, isMemorySuggestionCategory } from "./memory-suggestions.js";
+import { isHistoryCompressionEnabled, isNoReasoningRenderEnabled } from "./feature-flags.js";
+import {
+	compressAdvisorHistory,
+	compressNestedMessages,
+	type AdvisorHistoryMessage,
+} from "./history-compaction.js";
 import { buildTieredAdvisorSystemPrompt, isTieredPromptExperimentEnabled } from "./experiment.js";
 import {
 	findingMuteId,
@@ -161,6 +167,56 @@ export const MAX_ADVISOR_RETRIES_PER_UPDATE = 1;
 
 export const REVIEW_TIMEOUT_PAUSE_COUNT = 3;
 export const ADVISOR_RETRY_DELAY_MS = 250;
+/**
+ * Overage margin (× contextLimitTokens) beyond which history compression is
+ * not deferred by the cooldown: a heavily over-budget update rewrites the
+ * prefix rather than risking the model window. Within the margin, cooldown
+ * defers the rewrite so the append-only prefix cache keeps re-accumulating.
+ * The effective defer ceiling is also capped by the provider hard window (see
+ * shouldDeferHistoryCompression) so a high maxFraction can never defer a
+ * request past the model's real context limit.
+ */
+export const HISTORY_COMPRESSION_MARGIN_FACTOR = 1.15;
+
+/**
+ * Headroom factor for taking the slim-then-retry path after a provider
+ * overflow. The estimator already undercounted once (that is why the overflow
+ * branch runs), so slim is only trusted when it leaves the estimate comfortably
+ * below the soft limit — a repeated drift to the full limit would overflow
+ * again and waste the single retry (MAX_ADVISOR_RETRIES_PER_UPDATE = 1).
+ */
+export const NESTED_SLIM_RETRY_HEADROOM_FACTOR = 0.85;
+
+/**
+ * Pure hysteresis decision for deterministic history compression.
+ *
+ * Returns "defer" when a review is over the soft context budget but within the
+ * margin while a cooldown is still active — the update proceeds unchanged so the
+ * append-only prefix cache keeps re-accumulating instead of being re-written
+ * every over-limit turn. Returns "compress" when the cooldown has expired OR the
+ * estimate exceeds the margin (a hard overage must rewrite rather than risk the
+ * model window) OR the estimate would exceed the provider's hard window (with
+ * maxFraction near 1 the margin alone can cross the real context limit; the
+ * hard ceiling keeps the deferred request sendable).
+ */
+export function shouldDeferHistoryCompression(params: {
+	estimateTokens: number;
+	contextLimitTokens: number;
+	cooldownRemaining: number;
+	marginFactor?: number;
+	/** Provider hard window minus the response reserve. When provided, defer
+	 * is additionally capped by it: with maxFraction ≥ ~0.87,
+	 * limit × 1.15 alone can exceed the model's real context window. */
+	hardCeilingTokens?: number;
+}): boolean {
+	const marginFactor = params.marginFactor ?? HISTORY_COMPRESSION_MARGIN_FACTOR;
+	if (params.cooldownRemaining <= 0) return false;
+	let ceiling = Math.floor(params.contextLimitTokens * marginFactor);
+	if (params.hardCeilingTokens !== undefined) {
+		ceiling = Math.min(ceiling, params.hardCeilingTokens);
+	}
+	return params.estimateTokens <= ceiling;
+}
 export const ADVISOR_REVIEW_TIMEOUT_FAILURE = "Advisor review attempt timed out";
 export const ADVISOR_COMPACTION_TIMEOUT_FAILURE = "Advisor context compaction timed out";
 
@@ -435,6 +491,10 @@ export interface AdvisorRuntimeStatus {
 	compactionsCompleted: number;
 	compactionFailures: number;
 	compactionUsageUnavailable: number;
+	historyCompressionsCompleted: number;
+	historyCompressionDeferred: number;
+	/** Count of message-level lossy history slims applied before a full clear. */
+	nestedLossyCompressions: number;
 	contextReprimesCompleted: number;
 	contextReprimeFailures: number;
 	sessionTokenSoftCap: AdvisorConfig["limits"]["sessionTokenSoftCap"];
@@ -866,6 +926,9 @@ export function formatAdvisorDiagnosticsDump(
 		compactionsCompleted: status.compactionsCompleted,
 		compactionFailures: status.compactionFailures,
 		compactionUsageUnavailable: status.compactionUsageUnavailable,
+		historyCompressionsCompleted: status.historyCompressionsCompleted,
+		historyCompressionDeferred: status.historyCompressionDeferred,
+		nestedLossyCompressions: status.nestedLossyCompressions,
 		contextReprimesCompleted: status.contextReprimesCompleted,
 		contextReprimeFailures: status.contextReprimeFailures,
 		sessionTokenSoftCap: status.sessionTokenSoftCap,
@@ -1090,6 +1153,13 @@ export class AdvisorRuntime {
 	private consecutiveSilentReviews = 0;
 	private adaptiveCadenceWidening = 0;
 	private usageAnchorInvalidated = false;
+	/**
+	 * Remaining review attempts before deterministic history compression is
+	 * re-armed after the last rewrite (hysteresis: lets the append-only prefix
+	 * cache re-accumulate instead of being re-written every over-limit turn).
+	 * Configurable via context.historyCompressionCooldownTurns.
+	 */
+	private historyCompressionCooldownTurns = 0;
 	private configurationReprimeSnapshot?: {
 		text: string;
 		reason: "configuration-apply" | "lifecycle";
@@ -1161,6 +1231,9 @@ export class AdvisorRuntime {
 			compactionsCompleted: 0,
 			compactionFailures: 0,
 			compactionUsageUnavailable: 0,
+			historyCompressionsCompleted: 0,
+			historyCompressionDeferred: 0,
+			nestedLossyCompressions: 0,
 			contextReprimesCompleted: 0,
 			contextReprimeFailures: 0,
 			sessionTokenSoftCap: this.config.limits.sessionTokenSoftCap,
@@ -1554,7 +1627,9 @@ export class AdvisorRuntime {
 			Math.min(this.config.limits.maxReprimeTokens, this.status.contextLimitTokens),
 		);
 		while (tokenBudget >= 1) {
-			const snapshot = renderAdvisorReprimeSnapshot(contextEntries, tokenBudget);
+			const snapshot = renderAdvisorReprimeSnapshot(contextEntries, tokenBudget, {
+				includeReasoning: !isNoReasoningRenderEnabled(),
+			});
 			if (snapshot.text.trim().length === 0) break;
 			const prompt = `<advisor-reprime reason="${reason}">\n${snapshot.text}\n</advisor-reprime>`;
 			const estimate = estimateAdvisorContext(
@@ -2192,6 +2267,11 @@ export class AdvisorRuntime {
 		adviseSchemaMode: AdviseSchemaMode,
 	): Promise<void> {
 		await this.disposeNestedSession();
+		// Fresh nested session: no history to compress and no prior prefix rewrite
+		// in this epoch, so any cooldown carried from a previous session would
+		// wrongly defer compression on the new context. Covers enable, lifecycle
+		// re-enable, and applyConfiguration (which recreates via enable).
+		this.historyCompressionCooldownTurns = 0;
 		const contextLimitTokens = advisorContextLimit(model, this.config);
 		const compactionReserveTokens = Math.max(
 			1,
@@ -2552,7 +2632,9 @@ export class AdvisorRuntime {
 			this.persistState();
 			return;
 		}
-		const rendered = renderAdvisorDelta(entries, this.config.context.maxUpdateTokens);
+		const rendered = renderAdvisorDelta(entries, this.config.context.maxUpdateTokens, {
+			includeReasoning: !isNoReasoningRenderEnabled(),
+		});
 		this.status.redactions += rendered.redactions;
 		if (rendered.text.trim().length === 0) {
 			this.cursor = nextCursor;
@@ -2903,6 +2985,66 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		}
 
 		const epoch = this.status.epoch;
+		// pi-vcc-style deterministic history compression runs BEFORE the LLM
+		// compactor: old review cycles are replaced by a bounded summary block
+		// (advise outcomes, register lines, breadcrumbs preserved), which avoids
+		// both the LLM compaction call and non-deterministic history rewrites.
+		// Hysteresis: after a rewrite the append-only prefix cache must re-accumulate,
+		// so subsequent review attempts within the margin defer compression instead
+		// of re-writing the prefix every over-limit turn (cache-hostile; appendix 11).
+		if (isHistoryCompressionEnabled()) {
+			// Hard provider ceiling: prompt bytes must stay sendable even while
+			// deferring. With maxFraction near 1, limit × 1.15 alone can cross the
+			// model's real context window, so cap the defer ceiling by
+			// contextWindow − reserveTokens (unknown/zero window → no extra cap).
+			const hardWindow = this.model?.contextWindow ?? 0;
+			const hardCeilingTokens =
+				hardWindow > this.config.context.reserveTokens
+					? hardWindow - this.config.context.reserveTokens
+					: undefined;
+			const deferBase = {
+				estimateTokens: estimate.tokens,
+				contextLimitTokens: this.status.contextLimitTokens,
+				cooldownRemaining: this.historyCompressionCooldownTurns,
+			};
+			// hardCeilingTokens only constrains the defer ceiling when the provider
+			// window is known (unknown/zero window must not cap the deferral).
+			const defer =
+				hardCeilingTokens === undefined
+					? shouldDeferHistoryCompression(deferBase)
+					: shouldDeferHistoryCompression({ ...deferBase, hardCeilingTokens });
+			if (defer) {
+				// Review the update as-is while slightly over the soft budget; the
+				// prefix stays byte-identical so the cache keeps being reused.
+				this.historyCompressionCooldownTurns--;
+				this.status.historyCompressionDeferred++;
+				return { prompt: submittedPrompt, epoch: this.status.epoch, freshContext: false };
+			}
+			// SAFETY: the nested advisor session's state.messages are AgentMessage objects
+			// whose role/content/timestamp shape matches AdvisorHistoryMessage structurally;
+			// the cast is read-only here (content is decoded defensively downstream).
+			// Recency evidence (P2: 17/17 signals in the newest cycle, tail 0/9)
+			// fixed keep-recent at 1 — the summary carries the dedupe substrate for
+			// everything older. Default resolved inside compressAdvisorHistory.
+			const compressed = compressAdvisorHistory(
+				session.state.messages as readonly AdvisorHistoryMessage[],
+			);
+			if (compressed.compressedCycles > 0) {
+				// SAFETY: compressAdvisorHistory returns verbatim copies of the input messages
+				// plus one user-role summary message whose content is a plain string, which is
+				// a valid AgentMessage user shape; reassigning the state array is the same
+				// mechanism the LLM-compaction path uses after rebuilding.
+				session.state.messages = compressed.messages as typeof session.state.messages;
+				estimate = this.estimateNextAdvisorContext(session, submittedPrompt, false);
+				this.updateContextEstimate(estimate);
+				this.usageAnchorInvalidated = true;
+				this.status.historyCompressionsCompleted++;
+				this.historyCompressionCooldownTurns = this.config.context.historyCompressionCooldownTurns;
+				if (estimate.tokens <= this.status.contextLimitTokens) {
+					return { prompt: submittedPrompt, epoch: this.status.epoch, freshContext: false };
+				}
+			}
+		}
 		let compactionFailure: string | undefined;
 		try {
 			const compacting = session.compact(
@@ -2949,6 +3091,35 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			this.updateContextEstimate(estimate);
 			if (estimate.tokens <= this.status.contextLimitTokens) {
 				return { prompt: submittedPrompt, epoch: this.status.epoch, freshContext: false };
+			}
+		}
+
+		// Last resort before the nuclear full-clear: deterministically slim the
+		// OLDER portion of the history (strip thinking, cap old tool results)
+		// instead of dropping the whole prefix. Keeps the newest messages
+		// verbatim, so the next request still shares a byte-stable prefix with
+		// the last one where it matters. Falls through to the full clear only
+		// when nothing could be slimmed or the history is still over budget.
+		if (isHistoryCompressionEnabled()) {
+			// SAFETY: the nested advisor session's state.messages are AgentMessage
+			// objects whose role/content/timestamp shape matches AdvisorHistoryMessage
+			// structurally; compressNestedMessages decodes content defensively.
+			const slimmed = compressNestedMessages(
+				session.state.messages as readonly AdvisorHistoryMessage[],
+			);
+			if (slimmed.degraded > 0) {
+				// SAFETY: compressNestedMessages returns verbatim copies of the input
+				// messages (and slimmed variants with the same content contract),
+				// which is a valid AgentMessage state array shape.
+				session.state.messages = slimmed.messages as typeof session.state.messages;
+				this.usageAnchorInvalidated = true;
+				this.status.nestedLossyCompressions++;
+				this.historyCompressionCooldownTurns = this.config.context.historyCompressionCooldownTurns;
+				estimate = this.estimateNextAdvisorContext(session, submittedPrompt, false);
+				this.updateContextEstimate(estimate);
+				if (estimate.tokens <= this.status.contextLimitTokens) {
+					return { prompt: submittedPrompt, epoch: this.status.epoch, freshContext: false };
+				}
 			}
 		}
 
@@ -3273,6 +3444,55 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 					(!contextWasFresh || lifecycleReprime.usedSnapshot) &&
 					attempt < MAX_ADVISOR_RETRIES_PER_UPDATE
 				) {
+					// The provider reports overflow even though the local estimate
+					// (usage anchor) said the history fits — the estimate drifted.
+					// Prefer a deterministic message-level slim over the nuclear
+					// full clear so the retried request keeps a byte-stable prefix
+					// with the history that just overflowed (only older messages are
+					// thinned, the newest stay verbatim).
+					//
+					// The single retry is precious (MAX_ADVISOR_RETRIES_PER_UPDATE
+					// = 1) and the estimator already undercounted once — that is why
+					// this branch runs. So slim is taken only when it leaves clear
+					// headroom below the soft limit; otherwise fall through to the
+					// guaranteed full clear, which can never overflow on retry.
+					// SAFETY: the nested advisor session's state.messages match
+					// AdvisorHistoryMessage structurally; content is decoded
+					// defensively inside compressNestedMessages.
+					const history = session.state.messages as readonly AdvisorHistoryMessage[];
+					const slimmed = isHistoryCompressionEnabled()
+						? compressNestedMessages(history)
+						: undefined;
+					const reduced = slimmed !== undefined && slimmed.degraded > 0;
+					if (reduced) {
+						// SAFETY: compressNestedMessages returns verbatim copies of the
+						// input messages (and slimmed variants with the same content
+						// contract), a valid AgentMessage state array shape.
+						session.state.messages = slimmed.messages as typeof session.state.messages;
+						this.usageAnchorInvalidated = true;
+						this.status.nestedLossyCompressions++;
+						this.historyCompressionCooldownTurns =
+							this.config.context.historyCompressionCooldownTurns;
+						epoch = this.status.epoch;
+						promptForAttempt = lifecycleReprime.usedSnapshot ? updatePrompt : promptForAttempt;
+						const slimEstimate = this.estimateNextAdvisorContext(session, promptForAttempt, false);
+						this.updateContextEstimate(slimEstimate);
+						if (
+							slimEstimate.tokens <=
+							Math.floor(this.status.contextLimitTokens * NESTED_SLIM_RETRY_HEADROOM_FACTOR)
+						) {
+							// Slim left enough headroom that even a repeated estimate drift
+							// is unlikely to overflow again. contextWasFresh stays FALSE
+							// here on purpose: the retried context is slimmed, not empty,
+							// so a second overflow (should MAX_ADVISOR_RETRIES_PER_UPDATE
+							// ever rise) must still be allowed to escalate to the full
+							// clear below rather than being gated out by fresh=true.
+							this.status.retryAttempts++;
+							continue;
+						}
+					}
+					// Slim absent, unhelpful, or not comfortably sufficient: fall back to
+					// the original guaranteed recovery — full clear then retry.
 					this.clearPrivateContextAtCurrentCursor(session);
 					epoch = this.status.epoch;
 					promptForAttempt = lifecycleReprime.usedSnapshot ? updatePrompt : promptForAttempt;
@@ -4345,6 +4565,7 @@ export function formatAdvisorStatus(status: AdvisorRuntimeStatus): string {
 		`Context estimate: ${String(status.contextEstimateTokens)}/${String(status.contextLimitTokens)} tokens (${String(status.contextUsageTokens)} reported + ${String(status.contextTrailingEstimateTokens)} estimated, ${status.contextEstimateSource})`,
 		`Context compaction: ${String(status.compactionsCompleted)} completed, ${String(status.compactionFailures)} failed, ${String(status.compactionUsageUnavailable)} operations with usage unavailable through Pi public APIs`,
 		`Context re-prime: ${String(status.contextReprimesCompleted)} completed, ${String(status.contextReprimeFailures)} failed`,
+		`Context lossy slims: ${String(status.nestedLossyCompressions)} (message-level trimming before full clear)`,
 		`Session tokens: ${String(status.usage.total)} total (${String(status.usage.input)} input, ${String(status.usage.output)} output, ${String(status.usage.cacheRead)} cache read, ${String(status.usage.cacheWrite)} cache write), cap ${String(status.sessionTokenSoftCap)}`,
 		`Session cost: $${status.usage.costUsd.toFixed(4)}, cap ${String(status.sessionCostSoftCapUsd)}`,
 		`Timeouts: review ${String(status.maxReviewAttemptMs)} ms, nested compaction ${String(status.maxNestedCompactionMs)} ms, lifecycle abort ${String(status.maxLifecycleAbortMs)} ms`,

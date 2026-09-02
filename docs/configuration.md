@@ -122,11 +122,12 @@ tools: [read, grep]
 
 ### Context fields
 
-| YAML path                 | Type                           | Release default | Scope and Project merge         | Effect                                                                                                   |
-| ------------------------- | ------------------------------ | --------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `context.maxFraction`     | Number from `0.01` through `1` | `0.65`          | User sets; Project may lower    | Sets the fraction of model context available before private compaction or fresh current-update recovery. |
-| `context.reserveTokens`   | Number at least `0`            | `8192`          | User sets; Project may increase | Reserves response space and can trigger earlier maintenance.                                             |
-| `context.maxUpdateTokens` | Number at least `1`            | `24000`         | User sets; Project may lower    | Bounds each redacted Executor update and limits provider exposure and cost.                              |
+| YAML path                                 | Type                           | Release default | Scope and Project merge         | Effect                                                                                                                                                                                                                               |
+| ----------------------------------------- | ------------------------------ | --------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `context.maxFraction`                     | Number from `0.01` through `1` | `0.65`          | User sets; Project may lower    | Sets the fraction of model context available before private compaction or fresh current-update recovery.                                                                                                                             |
+| `context.reserveTokens`                   | Number at least `0`            | `8192`          | User sets; Project may increase | Reserves response space and can trigger earlier maintenance.                                                                                                                                                                         |
+| `context.maxUpdateTokens`                 | Number at least `1`            | `24000`         | User sets; Project may lower    | Bounds each redacted Executor update and limits provider exposure and cost.                                                                                                                                                          |
+| `context.historyCompressionCooldownTurns` | Number at least `0`            | `3`             | User sets; Project may set      | Hysteresis: after a history-compression prefix rewrite, defer further compression for this many review attempts while within the margin, so the append-only prefix cache can re-accumulate. `0` compresses on every over-limit turn. |
 
 ### Review, delivery, and session limits
 
@@ -143,7 +144,7 @@ tools: [read, grep]
 | `limits.deferredAdviceRetentionHours` | Number at least `0`              | `24`            | None         | User sets; Project may lower    | Controls cross-exit retention for accepted deferred advice. `0` disables new cross-exit note retention.        |
 | `limits.sessionTokenSoftCap`          | `off` or number at least `1`     | `off`           | None         | User sets; Project may lower    | Optionally pauses only Advisor when exact reported lifetime review tokens reach the configured cap.            |
 | `limits.sessionCostSoftCapUsd`        | `off` or number greater than `0` | `off`           | None         | User sets; Project may lower    | Optionally pauses only Advisor when provider-reported lifetime review cost reaches the configured cap.         |
-| `limits.maxReviewAttemptMs`           | Number from `1` through `600000` | `120000`        | `600000`     | User sets; Project may lower    | Wall-clock bound for one nested review prompt. Exceeding it aborts that attempt and skips the review.          |
+| `limits.maxReviewAttemptMs`           | Number from `1` through `600000` | `180000`        | `600000`     | User sets; Project may lower    | Wall-clock bound for one nested review prompt. Exceeding it aborts that attempt and skips the review.          |
 | `limits.maxNestedCompactionMs`        | Number from `1` through `300000` | `60000`         | `300000`     | User sets; Project may lower    | Wall-clock bound for Advisor's private nested `AgentSession.compact()`.                                        |
 | `limits.maxLifecycleAbortMs`          | Number from `0` through `30000`  | `2000`          | `30000`      | User sets; Project may lower    | Max wait for nested abort during disable, shutdown, and the next review after compact/tree. `0` does not wait. |
 
