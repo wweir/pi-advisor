@@ -58,6 +58,8 @@ export interface QueuedAdvisorUpdate {
 	restoredReplayCount?: number;
 	restoredQueued?: boolean;
 	heldForMaterialTurn?: boolean;
+	heldForQuiescence?: boolean;
+	heldSince?: number;
 }
 
 export interface OutstandingAdvice extends PendingAdvice {

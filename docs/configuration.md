@@ -122,30 +122,30 @@ tools: [read, grep]
 
 ### Context fields
 
-| YAML path                 | Type                           | Release default | Scope and Project merge         | Effect                                                                                                   |
-| ------------------------- | ------------------------------ | --------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `context.maxFraction`     | Number from `0.01` through `1` | `0.65`          | User sets; Project may lower    | Sets the fraction of model context available before private compaction or fresh current-update recovery. |
-| `context.reserveTokens`   | Number at least `0`            | `8192`          | User sets; Project may increase | Reserves response space and can trigger earlier maintenance.                                             |
-| `context.maxUpdateTokens` | Number at least `1`            | `24000`         | User sets; Project may lower    | Bounds each redacted Executor update and limits provider exposure and cost.                              |
+| YAML path                 | Type                           | Release default | Scope and Project merge         | Effect                                                                                                                                        |
+| ------------------------- | ------------------------------ | --------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `context.maxFraction`     | Number from `0.01` through `1` | `0.65`          | User sets; Project may lower    | Sets the fraction of model context available before private compaction or fresh current-update recovery.                                      |
+| `context.reserveTokens`   | Number at least `0`            | `8192`          | User sets; Project may increase | Reserves response space and can trigger earlier maintenance.                                                                                  |
+| `context.maxUpdateTokens` | Number at least `1`            | `24000`         | User sets; Project may lower    | Bounds each redacted Executor update — including a coalesced multi-turn update, which is re-bounded to the same budget newest-evidence-first. |
 
 ### Review, delivery, and session limits
 
-| YAML path                             | Type                             | Release default | Hard maximum | Scope and Project merge         | Effect                                                                                                         |
-| ------------------------------------- | -------------------------------- | --------------- | ------------ | ------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `limits.maxAdviceCharacters`          | Number at least `1`              | `2000`          | `8000`       | User sets; Project may lower    | Bounds accepted note characters and visibly truncates oversized ordinary rationale.                            |
-| `limits.maxAdviceTokens`              | Number at least `1`              | `512`           | `2048`       | User sets; Project may lower    | Adds an estimated-token bound to accepted notes.                                                               |
-| `limits.maxAdvisorTurnsPerUpdate`     | Number at least `1`              | `4`             | `12`         | User sets; Project may lower    | Stops long private Advisor tool loops.                                                                         |
-| `limits.maxToolCallsPerUpdate`        | Number at least `0`              | `8`             | `32`         | User sets; Project may lower    | Caps read-only calls in one update. `0` disables read-only calls while preserving `advise`.                    |
-| `limits.maxPendingTranscriptBytes`    | Number at least `1`              | `200000`        | `1000000`    | User sets; Project may lower    | Bounds coalesced Executor backlog and associated bounded metadata.                                             |
-| `limits.maxReprimeTokens`             | Number at least `1`              | `32000`         | `128000`     | User sets; Project may lower    | Bounds a redacted current-branch re-prime snapshot.                                                            |
-| `limits.minTurnsBetweenReviews`       | Number at least `1`              | `1`             | None         | User sets; Project may increase | Reduces review frequency by requiring more meaningful Executor turns.                                          |
-| `limits.minIntervalMs`                | Number at least `0`              | `0`             | None         | User sets; Project may increase | Reduces review frequency by requiring elapsed time while retaining one bounded coalesced update.               |
-| `limits.deferredAdviceRetentionHours` | Number at least `0`              | `24`            | None         | User sets; Project may lower    | Controls cross-exit retention for accepted deferred advice. `0` disables new cross-exit note retention.        |
-| `limits.sessionTokenSoftCap`          | `off` or number at least `1`     | `off`           | None         | User sets; Project may lower    | Optionally pauses only Advisor when exact reported lifetime review tokens reach the configured cap.            |
-| `limits.sessionCostSoftCapUsd`        | `off` or number greater than `0` | `off`           | None         | User sets; Project may lower    | Optionally pauses only Advisor when provider-reported lifetime review cost reaches the configured cap.         |
-| `limits.maxReviewAttemptMs`           | Number from `1` through `600000` | `120000`        | `600000`     | User sets; Project may lower    | Wall-clock bound for one nested review prompt. Exceeding it aborts that attempt and skips the review.          |
-| `limits.maxNestedCompactionMs`        | Number from `1` through `300000` | `60000`         | `300000`     | User sets; Project may lower    | Wall-clock bound for Advisor's private nested `AgentSession.compact()`.                                        |
-| `limits.maxLifecycleAbortMs`          | Number from `0` through `30000`  | `2000`          | `30000`      | User sets; Project may lower    | Max wait for nested abort during disable, shutdown, and the next review after compact/tree. `0` does not wait. |
+| YAML path                             | Type                             | Release default | Hard maximum | Scope and Project merge         | Effect                                                                                                                           |
+| ------------------------------------- | -------------------------------- | --------------- | ------------ | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `limits.maxAdviceCharacters`          | Number at least `1`              | `2000`          | `8000`       | User sets; Project may lower    | Bounds accepted note characters and visibly truncates oversized ordinary rationale.                                              |
+| `limits.maxAdviceTokens`              | Number at least `1`              | `512`           | `2048`       | User sets; Project may lower    | Adds an estimated-token bound to accepted notes.                                                                                 |
+| `limits.maxAdvisorTurnsPerUpdate`     | Number at least `1`              | `4`             | `12`         | User sets; Project may lower    | Stops long private Advisor tool loops.                                                                                           |
+| `limits.maxToolCallsPerUpdate`        | Number at least `0`              | `8`             | `32`         | User sets; Project may lower    | Caps read-only calls in one update. `0` disables read-only calls while preserving `advise`.                                      |
+| `limits.maxPendingTranscriptBytes`    | Number at least `1`              | `200000`        | `1000000`    | User sets; Project may lower    | Queue-level byte bound for the coalesced Executor backlog; the submitted update is further bounded by `context.maxUpdateTokens`. |
+| `limits.maxReprimeTokens`             | Number at least `1`              | `32000`         | `128000`     | User sets; Project may lower    | Bounds a redacted current-branch re-prime snapshot.                                                                              |
+| `limits.minTurnsBetweenReviews`       | Number at least `1`              | `1`             | None         | User sets; Project may increase | Reduces review frequency by requiring more meaningful Executor turns.                                                            |
+| `limits.minIntervalMs`                | Number at least `0`              | `0`             | None         | User sets; Project may increase | Reduces review frequency by requiring elapsed time while retaining one bounded coalesced update.                                 |
+| `limits.deferredAdviceRetentionHours` | Number at least `0`              | `24`            | None         | User sets; Project may lower    | Controls cross-exit retention for accepted deferred advice. `0` disables new cross-exit note retention.                          |
+| `limits.sessionTokenSoftCap`          | `off` or number at least `1`     | `off`           | None         | User sets; Project may lower    | Optionally pauses only Advisor when exact reported lifetime review tokens reach the configured cap.                              |
+| `limits.sessionCostSoftCapUsd`        | `off` or number greater than `0` | `off`           | None         | User sets; Project may lower    | Optionally pauses only Advisor when provider-reported lifetime review cost reaches the configured cap.                           |
+| `limits.maxReviewAttemptMs`           | Number from `1` through `600000` | `180000`        | `600000`     | User sets; Project may lower    | Wall-clock bound for one nested review prompt. Exceeding it aborts that attempt and skips the review.                            |
+| `limits.maxNestedCompactionMs`        | Number from `1` through `300000` | `60000`         | `300000`     | User sets; Project may lower    | Wall-clock bound for Advisor's private nested `AgentSession.compact()`.                                                          |
+| `limits.maxLifecycleAbortMs`          | Number from `0` through `30000`  | `2000`          | `30000`      | User sets; Project may lower    | Max wait for nested abort during disable, shutdown, and the next review after compact/tree. `0` does not wait.                   |
 
 Host `/compact` and tree navigation signal nested abort and return immediately. They never wait for the nested Advisor request to finish.
 Disable, shutdown, and the next Advisor review still bound nested abort waits with `maxLifecycleAbortMs` so those paths cannot hang unbounded on a provider that ignores abort.
@@ -211,6 +211,12 @@ Supersession applies only to an attempt actually aborted for that reason; a fail
 A superseded attempt is not a failed review.
 Held-for-material-turn updates never trigger supersession and wait for the next material window instead.
 Session soft caps win over supersession.
+
+A meaningful Executor turn that ends with stopReason `toolUse` is mid-burst — the next turn typically lands within seconds, so a review started there would almost always be superseded mid-flight.
+Such updates are quiescence-held and coalesced until a turn ends without `toolUse` (the Executor paused) or a fixed 90-second hold cap expires, whichever comes first, so one review covers the whole burst instead of several aborted attempts.
+Quiescence-held updates never trigger supersession; the hold state is runtime-only, so a queued update persists without it and is always restored as released.
+A coalesced update is re-bounded to the `context.maxUpdateTokens` budget (newest evidence first, with a discard marker) before submission, so a long burst cannot grow one review prompt past the per-update budget or fail it with fresh-context-overflow.
+`PI_ADVISOR_QUIESCENCE_HOLD_MAX_MS` overrides the cap in milliseconds (`0` disables holding) for tests and emergency rollback; it is not a supported tuning knob.
 
 When `review.skipNonMaterialTurns` is enabled, a Meaningful Executor turn with no Materially newer Executor activity is held and coalesced until a later material turn joins it.
 Neither ordinary turn cadence nor the elapsed-time cadence timer can submit that held update by itself.
