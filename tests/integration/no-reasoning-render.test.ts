@@ -18,6 +18,7 @@ import {
 	type AdvisorRuntimeHooks,
 } from "../../src/index.js";
 import { NO_REASONING_FLAG } from "../../src/feature-flags.js";
+import { clearEnvFlag } from "../fixtures/runtime-internals.js";
 import { createSessionHarness } from "../fixtures/session-harness.js";
 import {
 	createAdvisorProvider,
@@ -64,18 +65,18 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 
 function advisorRequestText(advisor: ScriptedProvider, index: number): string {
 	const request = advisor.requests[index];
-	return request === undefined ? "" : JSON.stringify(request.context?.messages ?? []);
+	return request === undefined ? "" : JSON.stringify(request.context.messages);
 }
 
 describe.sequential("no-reasoning render flag runtime gating", () => {
 	const previousFlag = process.env[NO_REASONING_FLAG];
 	afterEach(() => {
-		if (previousFlag === undefined) delete process.env[NO_REASONING_FLAG];
+		if (previousFlag === undefined) clearEnvFlag(NO_REASONING_FLAG);
 		else process.env[NO_REASONING_FLAG] = previousFlag;
 	});
 
 	it("default (flag absent): advisor update prompt strips Executor reasoning", async () => {
-		delete process.env[NO_REASONING_FLAG];
+		clearEnvFlag(NO_REASONING_FLAG);
 		const primary = createPrimaryProvider([
 			{
 				content: [
@@ -142,7 +143,7 @@ describe.sequential("no-reasoning render flag runtime gating", () => {
 	});
 
 	it("configuration re-prime rendering honors the flag", async () => {
-		delete process.env[NO_REASONING_FLAG];
+		clearEnvFlag(NO_REASONING_FLAG);
 		const primary = createPrimaryProvider([
 			{
 				content: [
@@ -192,7 +193,7 @@ describe.sequential("no-reasoning render flag runtime gating", () => {
 			// the carried history must NOT include the reasoning block.
 			const reprimeRequest = advisor.requests[1];
 			const reprimeText =
-				reprimeRequest === undefined ? "" : JSON.stringify(reprimeRequest.context?.messages ?? []);
+				reprimeRequest === undefined ? "" : JSON.stringify(reprimeRequest.context.messages);
 			expect(reprimeText).toContain("advisor-reprime");
 			expect(reprimeText).not.toContain("[reasoning]");
 			expect(reprimeText).not.toContain(THINKING_SENTINEL);

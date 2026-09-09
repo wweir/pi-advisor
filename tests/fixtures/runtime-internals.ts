@@ -126,6 +126,15 @@ export function bindFixtureInstructions(session: AgentSession): void {
 	});
 }
 
+/**
+ * Clear an environment flag without a dynamically computed `delete` key.
+ * Equivalent to `delete process.env[flag]` but lint-clean under
+ * @typescript-eslint/no-dynamic-delete.
+ */
+export function clearEnvFlag(flag: string): void {
+	Reflect.deleteProperty(process.env, flag);
+}
+
 export function runtimeInternals(runtime: AdvisorRuntime): AdvisorRuntimeTestInternals;
 export function runtimeInternals(
 	runtime: AdvisorRuntime | AdvisorRuntimeTestInternals,
