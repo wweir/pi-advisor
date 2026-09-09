@@ -8,7 +8,7 @@ import {
 	type AdvisorConfig,
 	type AdvisorRuntime,
 } from "../../src/index.js";
-import { runtimeInternals } from "../fixtures/runtime-internals.js";
+import { runtimeInternals, clearEnvFlag } from "../fixtures/runtime-internals.js";
 import { createSessionHarness } from "../fixtures/session-harness.js";
 import {
 	createAdvisorProvider,
@@ -68,7 +68,7 @@ function stepTool(name: string, resultText: string) {
 describe.sequential("quiescence-aware review triggering", () => {
 	const savedCap = process.env[HOLD_CAP_ENV];
 	afterEach(() => {
-		if (savedCap === undefined) delete process.env[HOLD_CAP_ENV];
+		if (savedCap === undefined) clearEnvFlag(HOLD_CAP_ENV);
 		else process.env[HOLD_CAP_ENV] = savedCap;
 	});
 
@@ -218,7 +218,8 @@ describe.sequential("quiescence-aware review triggering", () => {
 				const held = runtimeInternals(runtime).throttledUpdate;
 				return held?.heldForQuiescence === true && held.text.includes("OMEGA-");
 			});
-			const held = runtimeInternals(runtime ?? ({} as never)).throttledUpdate;
+			if (runtime === undefined) throw new Error("Expected the Advisor runtime to be initialized");
+			const held = runtimeInternals(runtime).throttledUpdate;
 			if (held === undefined) throw new Error("Expected a quiescence-held update");
 			expect(Buffer.byteLength(held.text, "utf8")).toBeLessThanOrEqual(400);
 			expect(held.text).toContain("[Older coalesced update content discarded");
@@ -264,7 +265,11 @@ describe.sequential("quiescence-aware review triggering", () => {
 			// though turn 2 is still blocked.
 			await waitFor(() => advisor.requests.length === 1);
 			expect(JSON.stringify(advisor.requests[0]?.context.messages)).toContain("IMMEDIATE-EVIDENCE");
-			expect(runtimeInternals(runtime ?? ({} as never)).throttledUpdate).toBeUndefined();
+			// waitFor above only resolves after at least one request, by which time the
+			// extension callback has captured the runtime.
+			const heldAfterDisable =
+				runtime === undefined ? undefined : runtimeInternals(runtime).throttledUpdate;
+			expect(heldAfterDisable).toBeUndefined();
 			midBurst.release();
 			await prompt;
 		} finally {

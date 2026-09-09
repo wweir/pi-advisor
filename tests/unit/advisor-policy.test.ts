@@ -248,6 +248,8 @@ function runtimeStatus(): AdvisorRuntimeStatus {
 		maxReviewAttemptMs: 120_000,
 		maxNestedCompactionMs: 60_000,
 		maxLifecycleAbortMs: 2_000,
+		maxAdvisorTurnsPerUpdate: 8,
+		maxToolCallsPerUpdate: 24,
 		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, costUsd: 0 },
 		reviewRequests: 0,
 		reviewsCompleted: 0,
@@ -277,6 +279,7 @@ function runtimeStatus(): AdvisorRuntimeStatus {
 		redactions: 0,
 		consecutiveFailures: 0,
 		consecutiveReviewTimeouts: 0,
+		consecutiveGovernorSkips: 0,
 		branchResets: 0,
 		staleQueuedMessagesDiscarded: 0,
 		warnings: 0,
@@ -418,7 +421,9 @@ describe("Slice 1 configuration and emission policy", () => {
 		expect(output).toContain("Reviews: 4 requests, 3 completed");
 		expect(output).toContain("0 superseded");
 		expect(output).toContain("Review cadence: every 1 meaningful turn");
-		expect(output).toContain("Governor skips: 2, latest Advisor turn limit reached");
+		expect(output).toContain(
+			"Governor skips: 2 (0 consecutive limit skips), latest Advisor turn limit reached",
+		);
 		expect(output).toContain("7 suppressed");
 		expect(output).toContain("Local redacted activity record: enabled, 9 records available, 1");
 		expect(output).toContain("never include reasoning or file-content bodies");
@@ -646,6 +651,18 @@ describe("Usage estimation and bounded transcript serialization through Slice 4B
 		for (const record of [start, attempt, outcome]) {
 			expect(parsePersistedAdvisorTranscriptRecord(record, "session-1")).toEqual(record);
 		}
+		for (const suppressed of [
+			{ ...outcome, suppressed: [{ reason: "dedupe" }] },
+			{
+				...outcome,
+				suppressed: [
+					{ reason: "muted", findingKey: "strict-mode:schema-input" },
+					{ reason: "active-capacity" },
+				],
+			},
+		]) {
+			expect(parsePersistedAdvisorTranscriptRecord(suppressed, "session-1")).toEqual(suppressed);
+		}
 		for (const invalid of [
 			{ ...start, text: "Executor body must not persist" },
 			{ ...attempt, text: "tool result body" },
@@ -654,6 +671,14 @@ describe("Usage estimation and bounded transcript serialization through Slice 4B
 			{ ...attempt, pattern: "API_KEY=unsafe-persisted-secret" },
 			{ ...outcome, advice: boundAdvice("private note", DEFAULT_ADVISOR_CONFIG) },
 			{ ...outcome, version: 3 },
+			{ ...outcome, suppressed: [{ reason: "unknown" }] },
+			{ ...outcome, suppressed: [] },
+			{ ...outcome, suppressed: [{ reason: "dedupe", findingKey: "x".repeat(129) }] },
+			{ ...outcome, suppressed: [{ reason: "dedupe", extra: 1 }] },
+			{
+				...outcome,
+				suppressed: Array.from({ length: 17 }, () => ({ reason: "dedupe" })),
+			},
 		]) {
 			expect(parsePersistedAdvisorTranscriptRecord(invalid, "session-1")).toBeUndefined();
 		}
