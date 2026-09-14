@@ -454,6 +454,18 @@ describe("Slice 1 configuration and emission policy", () => {
 		expect(isContentFreeAdvice("Stop: this migration deletes production rows.")).toBe(false);
 	});
 
+	it("suppresses measured placeholder-only junk notes without a min-length gate", () => {
+		expect(isContentFreeAdvice("placeholder")).toBe(true);
+		expect(isContentFreeAdvice("placeholder2")).toBe(true);
+		expect(isContentFreeAdvice("_placeholder_")).toBe(true);
+		expect(isContentFreeAdvice("  PLACEHOLDER3  ")).toBe(true);
+		expect(isContentFreeAdvice("y")).toBe(true);
+		expect(isContentFreeAdvice("probe (will not be emitted)")).toBe(true);
+		expect(isContentFreeAdvice("占位（不应被采纳，用于对照观察）。")).toBe(true);
+		expect(isContentFreeAdvice("The test still contains a placeholder assertion.")).toBe(false);
+		expect(isContentFreeAdvice("Verify the rollback path.")).toBe(false);
+	});
+
 	it("redacts and safely truncates oversized notes with visible metadata", () => {
 		const config = structuredClone(DEFAULT_ADVISOR_CONFIG);
 		config.limits.maxAdviceCharacters = 80;
