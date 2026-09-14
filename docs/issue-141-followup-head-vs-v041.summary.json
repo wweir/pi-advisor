@@ -1,90 +1,112 @@
 {
 	"protocol": "accuracy-experiment-v1",
 	"date": "2026-09-14",
-	"issue": "https://github.com/ribbons-digital/pi-advisor/issues/141#issuecomment-5518416233",
+	"issue": "https://github.com/ribbons-digital/pi-advisor/issues/141#issuecomment-5660636070",
+	"commentId": 5660636070,
 	"datasetHash": "9e7b6a8a7a1fd06c",
 	"budgetTokens": 20000,
-	"modelConfigured": "commandcode-goat/deepseek/deepseek-v4-flash",
-	"responseModel": "deepseek/deepseek-v4.1-flash",
-	"reps": 3,
+	"modelConfigured": "ollama-cloud/deepseek-v4.1-flash",
+	"responseModel": "deepseek-v4.1-flash",
+	"thinkingLevel": "off",
+	"reps": 5,
 	"corpusItems": 36,
 	"sourceCuts": 9,
+	"totalReviews": 360,
+	"runErrors": 0,
 	"gate": "insufficient-evidence",
 	"historyOnlyRecall": "not-measured",
-	"note": "Do not pool finding-expected recall across arms. Pair only toolresult recall and clean FP. Tail/reasoning are arm-fair visibility diagnostics, not #141 history-only recall (that gate needs both arms labeled finding so truncation is a miss).",
+	"note": "Do not pool finding-expected recall across arms. Pair only toolresult recall and clean FP. Tail/reasoning are arm-fair visibility diagnostics, not #141 history-only recall (that gate needs both arms labeled finding so truncation is a miss). The clean-silence stratum is saturated (98-100% FP on both trees), so it is a ceiling, not a quietness score.",
 	"head": {
-		"file": "docs/internal/accuracy-ab-head-prod-full.jsonl",
-		"sha256": "580d3c5076f0dfc26af0b45dface7abb2a97c414815f014dab19464e1303b2cc",
-		"sourceCommit": "3917c5f016c629a3d4bb0b5eb42961b366d0cd86",
+		"file": "docs/internal/accuracy-ab-head-ollama-full.jsonl",
+		"sha256": "8fcfb378d53b10ca86d69e6af52d75e59744528ae44b974c41f43450603a81a7",
+		"sourceCommit": "8a64c6a9356a309a2c6f145a448a3cdb589602fc",
 		"promptHash": "e672f18480c03c20",
-		"harnessHash": "ba9eca120752df4d",
+		"harnessHash": "3b92c6293b0e51fb",
 		"promptChars": 5266,
 		"arm": "new",
-		"n": 108,
-		"usable": 107,
-		"unusable": ["ctx-02-clean new rep2 run-error"],
-		"junkNotes": 16,
-		"cleaned": {
-			"toolresultRecall": [26, 27],
-			"cleanFp": [19, 26],
-			"tailRecall": [17, 27],
-			"reasoningSpokeFp": [16, 27]
+		"n": 180,
+		"usable": 180,
+		"junkNotes": 1,
+		"perVariant": {
+			"toolresultRecall": [36, 45],
+			"cleanFp": [45, 45],
+			"tailRecall": [8, 45],
+			"reasoningSpokeFp": [44, 45]
 		},
-		"tokensSum": 3629164,
-		"meanTokens": 33917,
-		"uncachedInputTokens": 496540,
-		"cachedTokens": 2215128,
-		"outputTokens": 917496,
-		"cacheShare": 0.61,
-		"providerCostUsd": 0,
-		"estimatedUsdOllamaV41Flash": 1.2632,
+		"tokensSum": 4592979,
+		"meanTokens": 25517,
+		"uncachedInputTokens": 928164,
+		"cachedTokens": 3592996,
+		"outputTokens": 71819,
+		"cacheShare": 0.782,
+		"providerCostUsd": 0.3862,
 		"priceBasis": {
 			"source": "ollama-cloud deepseek-v4.1-flash list",
 			"usdPerMillion": { "input": 0.3, "cacheRead": 0.006, "output": 1.2 }
 		}
 	},
 	"v041": {
-		"file": "docs/internal/accuracy-ab-v041-prod-full.jsonl",
-		"sha256": "04069da1aff5da2b56b26e23612bc0b6a94ac64336f102db04654e8ef170f951",
+		"file": "docs/internal/accuracy-ab-v041-ollama-full.jsonl",
+		"sha256": "7a18991c6216b5e06b086c20e3383a3651ff8ecc19c47b7783124589e3a91c82",
 		"sourceCommit": "362e2125274635ba6dadfcfb298b93132849fa43",
 		"promptHash": "a9706d4769deb99e",
 		"harnessHash": "bb1f392471716012",
 		"promptChars": 3744,
 		"arm": "old",
-		"n": 108,
-		"usable": 108,
-		"junkNotes": 5,
-		"cleaned": {
-			"toolresultRecall": [10, 27],
-			"cleanFp": [20, 26],
-			"tailSpokeFp": [15, 27],
-			"reasoningRecall": [1, 27]
+		"n": 180,
+		"usable": 180,
+		"junkNotes": 0,
+		"perVariant": {
+			"toolresultRecall": [20, 45],
+			"cleanFp": [44, 45],
+			"tailSpokeFp": [45, 45],
+			"reasoningRecall": [6, 45]
 		},
-		"tokensSum": 3627551,
-		"meanTokens": 33588,
-		"uncachedInputTokens": 572346,
-		"cachedTokens": 1964276,
-		"outputTokens": 1090929,
-		"cacheShare": 0.541,
-		"providerCostUsd": 0,
-		"estimatedUsdOllamaV41Flash": 1.4926,
+		"tokensSum": 4261143,
+		"meanTokens": 23673,
+		"uncachedInputTokens": 838933,
+		"cachedTokens": 3365400,
+		"outputTokens": 56810,
+		"cacheShare": 0.79,
+		"providerCostUsd": 0.34,
 		"priceBasis": {
 			"source": "ollama-cloud deepseek-v4.1-flash list",
 			"usdPerMillion": { "input": 0.3, "cacheRead": 0.006, "output": 1.2 }
 		}
 	},
-	"pairedCleaned": {
-		"keys": 107,
+	"paired": {
+		"keys": 180,
 		"bootstrap": {
 			"seed": 20260914,
 			"iterations": 4000,
 			"unit": "source-cut",
 			"nCuts": 9
 		},
-		"toolresultRecallDeltaPp": 59.3,
-		"toolresultRecallCi95Pp": [29.6, 85.2],
-		"cleanFpDeltaPp": -3.8,
-		"cleanFpCi95Pp": [-28.0, 18.5],
-		"meanTokenDeltaPct": 0.8
+		"toolresultRecallDeltaPp": 35.6,
+		"toolresultRecallCi95Pp": [15.6, 53.3],
+		"toolresultMcNemarExactP": 0.0703,
+		"cleanFpDeltaPp": 2.2,
+		"cleanFpCi95Pp": [0.0, 6.7],
+		"meanTokenDeltaPct": 7.9,
+		"meanTokenCi95Pct": [6.8, 9.0]
+	},
+	"gates": {
+		"corpus-floors": "fail",
+		"history-recall-gain": "unmet (not measured: no history-only cases)",
+		"render-recall-cost": "unmet (not measured: no render-only pairs)",
+		"false-positive-safety": "unmet (CI upper +6.7pp > +5pp)",
+		"visible-recall-guard": "pass",
+		"precision-guard": "pass",
+		"token-budget": "pass",
+		"overall": "insufficient-evidence"
+	},
+	"supersedes": {
+		"reps": 3,
+		"model": "commandcode-goat/deepseek/deepseek-v4-flash",
+		"files": [
+			"docs/internal/accuracy-ab-head-prod-full.jsonl",
+			"docs/internal/accuracy-ab-v041-prod-full.jsonl"
+		],
+		"reason": "Raised repeats to the bar's >=5 and moved to the ollama v4.1-flash model; the 3-repeat goat run remains as exploratory provenance only."
 	}
 }
