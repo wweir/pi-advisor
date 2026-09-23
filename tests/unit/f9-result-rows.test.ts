@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+	contentFreeNoteCount,
 	cutKeyForItemId,
 	dedupeResultRows,
 	evaluationNotePathFor,
@@ -22,6 +23,7 @@ import {
 	placeholderOnlyNoteCount,
 	resultRowIsUsable,
 	unusableRowCount,
+	withoutContentFreeNotes,
 	type AccuracyResultRow,
 } from "../../scripts/f9-experiment/result-rows.js";
 
@@ -163,6 +165,47 @@ describe("placeholderOnlyNoteCount (weak-model junk notes inflate FP)", () => {
 			row(),
 		];
 		expect(placeholderOnlyNoteCount(rows)).toBe(3);
+	});
+});
+
+describe("withoutContentFreeNotes (score what delivery actually shows)", () => {
+	it("counts every note production suppresses, not only placeholders", () => {
+		const rows = [
+			row({ note: "placeholder" }),
+			row({ note: "looks good" }),
+			row({ note: "  " }),
+			row({ note: "real finding about src/runtime.ts" }),
+			row(),
+		];
+		expect(contentFreeNoteCount(rows)).toBe(3);
+	});
+
+	it("turns a suppressed silence note into silence-correct", () => {
+		// The measured case: HEAD emitted `placeholder` on ctx-06-clean rep 1, which
+		// raw scoring recorded as a false positive the product never delivered.
+		const raw = row({
+			itemId: "ctx-06-clean",
+			variant: "clean",
+			expected: "silence",
+			visible: false,
+			verdict: "false-positive",
+			note: "placeholder",
+		});
+		const [cleaned] = withoutContentFreeNotes([raw]);
+		expect(cleaned?.verdict).toBe("silence-correct");
+		expect(cleaned?.note).toBeUndefined();
+	});
+
+	it("turns a suppressed note on a visible finding item into a miss", () => {
+		const raw = row({ verdict: "hit", note: "y" });
+		const [cleaned] = withoutContentFreeNotes([raw]);
+		expect(cleaned?.verdict).toBe("miss");
+	});
+
+	it("leaves a real note and its verdict untouched", () => {
+		const raw = row({ note: "a real defect in src/runtime.ts" });
+		const [cleaned] = withoutContentFreeNotes([raw]);
+		expect(cleaned).toEqual(raw);
 	});
 });
 

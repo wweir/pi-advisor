@@ -16,13 +16,18 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
+import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 
 import {
 	f9HarnessHash,
 	identityBaseMatches,
 	type ExperimentIdentityBase,
 } from "../../scripts/f9-experiment/experiment-identity.js";
-import { loadPersistedJsonl } from "../../scripts/f9-experiment/harness.js";
+import {
+	loadPersistedJsonl,
+	registerUserProviderExtensions,
+} from "../../scripts/f9-experiment/harness.js";
 
 const created: string[] = [];
 
@@ -163,5 +168,93 @@ describe("identityBaseMatches (resume eligibility)", () => {
 		expect(identityBaseMatches(undefined, base)).toBe(false);
 		expect(identityBaseMatches({ ...base, harnessHash: "other" }, base)).toBe(false);
 		expect(identityBaseMatches({ ...base, datasetHash: "other" }, base)).toBe(false);
+	});
+});
+
+/**
+ * Pi's `registerProvider` has two shapes: `(id, config)` and a constructed
+ * `Provider`. The harness adapter must forward both, and must reject a one-arg
+ * value that is not a Provider before it reaches `registerNativeProvider`
+ * (which registers first and only then fails on the missing members).
+ */
+describe("registerUserProviderExtensions (both registerProvider shapes)", () => {
+	const PROVIDER_ID = "probe-provider";
+	/** Literal Provider members, as produced by Pi's own provider factories. */
+	const PROVIDER_MEMBERS = `{
+		id: "${PROVIDER_ID}",
+		name: "Probe provider",
+		auth: { apiKey: { resolve: () => undefined } },
+		getModels: () => [],
+		stream: () => { throw new Error("stream is not exercised"); },
+		streamSimple: () => { throw new Error("streamSimple is not exercised"); },
+	}`;
+
+	async function scratchExtension(body: string): Promise<string> {
+		const agentDir = await scratchDir();
+		const extensionDir = join(agentDir, "extensions", PROVIDER_ID);
+		await mkdir(extensionDir, { recursive: true });
+		await writeFile(join(extensionDir, "index.ts"), body, "utf8");
+		process.env.PI_ADVISOR_EXPERIMENT_PROVIDER_EXTENSION = PROVIDER_ID;
+		return agentDir;
+	}
+
+	async function scratchRuntime(): Promise<ModelRuntime> {
+		return ModelRuntime.create({
+			credentials: new InMemoryCredentialStore(),
+			modelsPath: null,
+			allowModelNetwork: false,
+		});
+	}
+
+	afterEach(() => {
+		delete process.env.PI_ADVISOR_EXPERIMENT_PROVIDER_EXTENSION;
+	});
+
+	it("forwards a constructed Provider to registerNativeProvider", async () => {
+		const agentDir = await scratchExtension(
+			`export default (pi) => { pi.registerProvider(${PROVIDER_MEMBERS}); };\n`,
+		);
+		const runtime = await scratchRuntime();
+
+		await expect(
+			registerUserProviderExtensions(agentDir, PROVIDER_ID, runtime, "[t]"),
+		).resolves.toEqual([PROVIDER_ID]);
+		expect(runtime.getRegisteredNativeProvider(PROVIDER_ID)?.name).toBe("Probe provider");
+	});
+
+	it("forwards the (id, config) form to registerProvider", async () => {
+		const agentDir = await scratchExtension(
+			`export default (pi) => { pi.registerProvider("${PROVIDER_ID}", { baseUrl: "https://probe.invalid", api: "probe-api" }); };\n`,
+		);
+		const runtime = await scratchRuntime();
+
+		await expect(
+			registerUserProviderExtensions(agentDir, PROVIDER_ID, runtime, "[t]"),
+		).resolves.toEqual([PROVIDER_ID]);
+		expect(runtime.getRegisteredProviderConfig(PROVIDER_ID)).toBeDefined();
+	});
+
+	it("rejects a one-arg value missing the Provider members without registering", async () => {
+		const agentDir = await scratchExtension(
+			`export default (pi) => { pi.registerProvider({ id: "${PROVIDER_ID}" }); };\n`,
+		);
+		const runtime = await scratchRuntime();
+
+		await expect(
+			registerUserProviderExtensions(agentDir, PROVIDER_ID, runtime, "[t]"),
+		).resolves.toEqual([]);
+		expect(runtime.getRegisteredNativeProvider(PROVIDER_ID)).toBeUndefined();
+	});
+
+	it("rejects the string form without a config", async () => {
+		const agentDir = await scratchExtension(
+			`export default (pi) => { pi.registerProvider("${PROVIDER_ID}"); };\n`,
+		);
+		const runtime = await scratchRuntime();
+
+		await expect(
+			registerUserProviderExtensions(agentDir, PROVIDER_ID, runtime, "[t]"),
+		).resolves.toEqual([]);
+		expect(runtime.getRegisteredProviderConfig(PROVIDER_ID)).toBeUndefined();
 	});
 });

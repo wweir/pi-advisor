@@ -22,6 +22,7 @@
  */
 import { readFileSync } from "node:fs";
 
+import { isContentFreeAdvice } from "../../src/advice.js";
 import {
 	isBooleanValue,
 	isNumberValue,
@@ -180,6 +181,31 @@ const PLACEHOLDER_NOTE = /^\s*_?placeholder\d*_?\s*$/iu;
  */
 export function placeholderOnlyNoteCount(rows: readonly AccuracyResultRow[]): number {
 	return rows.filter((row) => row.note !== undefined && PLACEHOLDER_NOTE.test(row.note)).length;
+}
+
+/** Rows whose note production would suppress before delivery (`isContentFreeAdvice`). */
+export function contentFreeNoteCount(rows: readonly AccuracyResultRow[]): number {
+	return rows.filter((row) => row.note !== undefined && isContentFreeAdvice(row.note)).length;
+}
+
+/**
+ * Re-score rows the way production delivery does. `createAdviseTool` drops a
+ * content-free note before the user sees it, so the row is not a finding; read
+ * raw, such a note scores as a silence false positive (or a finding miss) and
+ * inflates the false-positive rate for weak models that emit `placeholder`.
+ * The verdict is re-derived from the recorded expectation, which needs no corpus
+ * terms because a dropped note can never be a hit.
+ */
+export function withoutContentFreeNotes(rows: readonly AccuracyResultRow[]): AccuracyResultRow[] {
+	return rows.map((row) => {
+		if (row.note === undefined || !isContentFreeAdvice(row.note)) return row;
+		const delivered: AccuracyResultRow = {
+			...row,
+			verdict: row.expected === "silence" || !row.visible ? "silence-correct" : "miss",
+		};
+		delete delivered.note;
+		return delivered;
+	});
 }
 
 /**
