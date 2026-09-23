@@ -12,15 +12,15 @@ Tracked index of Advisor accuracy/cost runs for issue #141 (HEAD vs v0.4.1, prom
 
 **Directional / insufficient for the #141 merge gate.** The bar is defined in comment [5518416233](https://github.com/ribbons-digital/pi-advisor/issues/141#issuecomment-5518416233); our status write-up is posted at [5660636070](https://github.com/ribbons-digital/pi-advisor/issues/141#issuecomment-5660636070).
 
-| Gate                        | Bar                                                        | 2026-09-14 run (36 items × 5 reps)                     |
-| --------------------------- | ---------------------------------------------------------- | ------------------------------------------------------ |
-| Independent finding cases   | 30, separate sessions from silence                         | 9 `toolresult` groups / 9 shared sessions              |
-| Independent silence cases   | 30, separate sessions                                      | 9 `clean` groups / same 9 sessions                     |
-| Reps                        | ≥5                                                         | **5 (met)**                                            |
-| History-only finding recall | +10pp; **both** arms labeled finding; truncated arm = miss | **not measured** (arm-fair tail is `expected=silence`) |
-| Visible recall              | 95% paired CI inside the margin                            | **+35.6pp [+15.6, +53.3] (pass)**                      |
-| False positives             | within ±5pp                                                | +2.2pp [0.0, +6.7] — upper bound exceeds +5pp (unmet)  |
-| Tokens                      | within +10%                                                | **+7.9% [6.8, 9.0] (pass)**                            |
+| Gate                        | Bar                                                        | 2026-09-14 run (36 items × 5 reps)                                                                  |
+| --------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Independent finding cases   | 30, separate sessions from silence                         | 9 `toolresult` groups / 9 shared sessions                                                           |
+| Independent silence cases   | 30, separate sessions                                      | 9 `clean` groups / same 9 sessions                                                                  |
+| Reps                        | ≥5                                                         | **5 (met)**                                                                                         |
+| History-only finding recall | +10pp; **both** arms labeled finding; truncated arm = miss | **not measured** (arm-fair tail is `expected=silence`)                                              |
+| Visible recall              | 95% paired CI inside the margin                            | **+35.6pp [+15.6, +53.3] (pass)**                                                                   |
+| False positives             | within ±5pp                                                | raw +2.2pp [0.0, +6.7]; delivered +0.0pp [−6.7, +6.7] — upper bound exceeds +5pp either way (unmet) |
+| Tokens                      | within +10%                                                | **+7.9% [6.8, 9.0] (pass)**                                                                         |
 
 Do not net `expected=finding` across arms. Pair only `toolresult` recall and `clean` FP; `tail` / `reasoning` are visibility diagnostics.
 
@@ -31,6 +31,8 @@ Do not net `expected=finding` across arms. Pair only `toolresult` recall and `cl
 Design, per-variant rates, paired intervals and the full SHA-256s are in [the write-up](issue-141-followup-head-vs-v041.md). Identity needed to verify or reproduce a row:
 
 Shared: `protocol=accuracy-experiment-v1`, `datasetHash=9e7b6a8a7a1fd06c`, `budgetTokens=20000`, configured model `ollama-cloud/deepseek-v4.1-flash`, response `deepseek-v4.1-flash` on all 360 rows, `thinkingLevel: off`, 0 run errors.
+
+The recorded `harnessHash` fingerprints the harness sources **at run time**. The HEAD half ran with an uncommitted one-arg `registerProvider` adapter that was later re-landed lint-clean in `scripts/f9-experiment/harness.ts`, so recomputing it from a later tree yields a different value. That code path was not executed in this pair (no provider extension was loaded), so it does not change these numbers; a resume simply will not match and will re-run.
 
 | File (gitignored)                                  | n   | promptHash         | harnessHash        | sourceCommit   |
 | -------------------------------------------------- | --- | ------------------ | ------------------ | -------------- |
@@ -53,7 +55,11 @@ Whole-note placeholders (`placeholder`, `placeholder2`, `y`, `probe (will not be
 - Live probe (12 reviews, `commandcode-goat`): the model emitted 4 placeholder notes; `createAdviseTool` suppressed all 4. One delivered note was `x`, deliberately not in the placeholder list.
 - Historical replay: the 16 junk notes already recorded on `accuracy-ab-head-prod-full.jsonl` were replayed through the same executor — 16/16 suppressed. Not a second live run.
 
-`ollama-cloud/deepseek-v4.1-flash` produced 1 content-free note in 360 reviews, so raw-vs-cleaned splitting is only needed for `commandcode-goat` data.
+`ollama-cloud/deepseek-v4.1-flash` produced 1 content-free note (HEAD `ctx-06-clean` rep 1) in 360 reviews. That single note sits on the paired silence stratum, so this run must be read in both views: raw silence FP `+2.2pp [0.0, +6.7]` and delivered `+0.0pp [−6.7, +6.7]` (upper bound +6.7pp either way). Raw is the default; add `--junk-notes clean` to `analyze-accuracy-paired.ts` for the delivered view, which is what a user actually sees.
+
+```bash
+tsx scripts/f9-experiment/analyze-accuracy-paired.ts --in docs/internal/accuracy-ab-head-vs-v041-ollama-full.jsonl --junk-notes clean
+```
 
 ---
 
@@ -62,7 +68,7 @@ Whole-note placeholders (`placeholder`, `placeholder2`, `y`, `probe (will not be
 | File                                                                                                                                        | What it is                                                                                              | Use                                                 |
 | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
 | `accuracy-ab-head-ollama-full.jsonl`, `accuracy-ab-v041-ollama-full.jsonl`                                                                  | canonical 180-row halves of the 2026-09-14 run                                                          | current #141 evidence                               |
-| `accuracy-ab-head-vs-v041-ollama-full.jsonl`, `.analysis.md`                                                                                | combined 360 rows + the paired analyzer output                                                          | reproduce the 5-rep numbers                         |
+| `accuracy-ab-head-vs-v041-ollama-full.jsonl`, `.analysis.md`, `.analysis.cleaned.md`                                                        | combined 360 rows + the paired analyzer output (raw and `--junk-notes clean`)                           | reproduce the 5-rep numbers                         |
 | `clean-note-adjudication.jsonl`, `accuracy-ab-luna-prod-pilot.jsonl`                                                                        | 24-row luna/flash silence-note labels (`true_issue` / `silence` / `true_but_out_of_scope` / `nonsense`) | why corpus clean FP is not production quietness     |
 | `accuracy-ab-scoped.jsonl`, `accuracy-ab-lean.jsonl`, `accuracy-ab-tuned.jsonl`, `accuracy-ab-posind.jsonl`, `accuracy-ab-posind-ccg.jsonl` | prompt A/Bs behind the adopted scope + coverage rules (`lean` falsified, `tuned` not adopted)           | prompt-adoption evidence                            |
 | `accuracy-ab-ds41.jsonl`, `accuracy-ab-v041.jsonl`                                                                                          | pre-adoption 360-row runs on the frozen baseline prompt                                                 | historical only; do not mix with the canonical pair |

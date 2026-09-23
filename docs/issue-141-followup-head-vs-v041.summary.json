@@ -15,7 +15,7 @@
 	"runErrors": 0,
 	"gate": "insufficient-evidence",
 	"historyOnlyRecall": "not-measured",
-	"note": "Do not pool finding-expected recall across arms. Pair only toolresult recall and clean FP. Tail/reasoning are arm-fair visibility diagnostics, not #141 history-only recall (that gate needs both arms labeled finding so truncation is a miss). The clean-silence stratum is saturated (98-100% FP on both trees), so it is a ceiling, not a quietness score.",
+	"note": "Do not pool finding-expected recall across arms. Pair only toolresult recall and clean FP. Tail/reasoning are arm-fair visibility diagnostics, not #141 history-only recall (that gate needs both arms labeled finding so truncation is a miss). The clean-silence stratum is saturated (98-100% FP on both trees), so it is a ceiling, not a quietness score. Read the silence stratum in both views: `cleanFp` counts the 1 content-free HEAD note that production suppresses before delivery, so it is an upper bound; `cleanFpDelivered` is what a user sees.",
 	"head": {
 		"file": "docs/internal/accuracy-ab-head-ollama-full.jsonl",
 		"sha256": "8fcfb378d53b10ca86d69e6af52d75e59744528ae44b974c41f43450603a81a7",
@@ -30,6 +30,7 @@
 		"perVariant": {
 			"toolresultRecall": [36, 45],
 			"cleanFp": [45, 45],
+			"cleanFpDelivered": [44, 45],
 			"tailRecall": [8, 45],
 			"reasoningSpokeFp": [44, 45]
 		},
@@ -59,6 +60,7 @@
 		"perVariant": {
 			"toolresultRecall": [20, 45],
 			"cleanFp": [44, 45],
+			"cleanFpDelivered": [44, 45],
 			"tailSpokeFp": [45, 45],
 			"reasoningRecall": [6, 45]
 		},
@@ -87,6 +89,9 @@
 		"toolresultMcNemarExactP": 0.0703,
 		"cleanFpDeltaPp": 2.2,
 		"cleanFpCi95Pp": [0.0, 6.7],
+		"cleanFpDeltaPpDelivered": 0.0,
+		"cleanFpCi95PpDelivered": [-6.7, 6.7],
+		"cleanFpView": "raw = every note counts; delivered = the 1 content-free note dropped, as production does (`--junk-notes clean`). Both intervals reach +6.7pp, so the safety gate is unmet either way; the raw point estimate is an upper bound.",
 		"meanTokenDeltaPct": 7.9,
 		"meanTokenCi95Pct": [6.8, 9.0]
 	},
@@ -94,7 +99,7 @@
 		"corpus-floors": "fail",
 		"history-recall-gain": "unmet (not measured: no history-only cases)",
 		"render-recall-cost": "unmet (not measured: no render-only pairs)",
-		"false-positive-safety": "unmet (CI upper +6.7pp > +5pp)",
+		"false-positive-safety": "unmet (raw point +2.2pp, delivered +0.0pp; CI upper +6.7pp > +5pp in both views)",
 		"visible-recall-guard": "pass",
 		"precision-guard": "pass",
 		"token-budget": "pass",

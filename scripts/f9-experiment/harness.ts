@@ -10,8 +10,42 @@ import { pathToFileURL } from "node:url";
 
 import type { AgentSession, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { calculateContextTokens } from "@earendil-works/pi-agent-core";
+import type { Provider } from "@earendil-works/pi-ai";
 
-import { isFunctionValue } from "../../src/value-guards.js";
+import { isFunctionValue, isRecordValue, isStringValue } from "../../src/value-guards.js";
+
+/**
+ * Shape check for the `Provider` members an untrusted extension hands to
+ * `ModelRuntime.registerNativeProvider`.
+ *
+ * The extension module is dynamic user code, so `Provider` is a boundary claim
+ * rather than an established fact: registering a value that is missing these
+ * members mutates the runtime's provider map and only then fails with an
+ * internal error instead of a diagnostic naming the extension. Whether the
+ * declared auth methods are usable stays the runtime's own check.
+ */
+interface UnvalidatedProvider {
+	id?: unknown;
+	name?: unknown;
+	auth?: unknown;
+	getModels?: unknown;
+	stream?: unknown;
+	streamSimple?: unknown;
+}
+
+function isProviderValue(
+	value: Parameters<typeof isRecordValue>[0],
+): value is UnvalidatedProvider & Provider {
+	if (!isRecordValue<UnvalidatedProvider>(value)) return false;
+	return (
+		isStringValue(value.id) &&
+		isStringValue(value.name) &&
+		isRecordValue(value.auth) &&
+		isFunctionValue(value.getModels) &&
+		isFunctionValue(value.stream) &&
+		isFunctionValue(value.streamSimple)
+	);
+}
 
 /** Usage of the last usable assistant turn, as recorded on result rows. */
 export interface AssistantUsageView {
@@ -144,6 +178,7 @@ export async function registerUserProviderExtensions(
 	if (!entryPath.startsWith(`${extensionsDir}${sep}`)) return [];
 	try {
 		interface ProviderRegistrationApi {
+			registerProvider(provider: Provider): void;
 			registerProvider(
 				registeredProviderId: string,
 				config: Parameters<ModelRuntime["registerProvider"]>[1],
@@ -161,10 +196,27 @@ export async function registerUserProviderExtensions(
 		);
 		const adapter: ProviderRegistrationApi = {
 			registerProvider: (
-				registeredProviderId: string,
-				config: Parameters<ModelRuntime["registerProvider"]>[1],
+				providerOrId: Provider | string,
+				config?: Parameters<ModelRuntime["registerProvider"]>[1],
 			) => {
-				modelRuntime.registerProvider(registeredProviderId, config);
+				// Pi's ExtensionAPI accepts either a constructed Provider (oauth
+				// subscription extensions) or (id, config). The two-arg form is the
+				// ollama-cloud shim; the one-arg form is tophantai-subscription.
+				if (isStringValue(providerOrId)) {
+					if (config === undefined) {
+						throw new Error(
+							`${logPrefix} provider extension ${providerId} called registerProvider(${providerOrId}) without config`,
+						);
+					}
+					modelRuntime.registerProvider(providerOrId, config);
+					return;
+				}
+				if (!isProviderValue(providerOrId)) {
+					throw new Error(
+						`${logPrefix} provider extension ${providerId} passed a value missing the Provider members to registerProvider`,
+					);
+				}
+				modelRuntime.registerNativeProvider(providerOrId);
 			},
 			registerCommand: () => {
 				// The experiment harness needs only provider registration.

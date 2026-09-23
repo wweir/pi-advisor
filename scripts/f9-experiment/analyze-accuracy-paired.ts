@@ -23,7 +23,13 @@
  *    corresponds to no hypothesis.
  *
  * Run: `bun scripts/f9-experiment/analyze-accuracy-paired.ts [--in <path>]
- *      [--seed 20260912] [--iterations 10000]`
+ *      [--seed 20260912] [--iterations 10000] [--junk-notes raw|clean]`
+ *
+ * `--junk-notes clean` re-scores a row whose note production would suppress
+ * before delivery (`isContentFreeAdvice`) as no-note. Read raw, a weak model's
+ * `placeholder` on a silence-expected item is a false positive the product never
+ * showed the user, so the raw rate is an upper bound; report both when the two
+ * disagree. Raw is the default so an existing saved output stays reproducible.
  */
 import {
 	clusterBySession,
@@ -34,11 +40,12 @@ import {
 	type CaseObservation,
 } from "./paired-stats.js";
 import {
+	contentFreeNoteCount,
 	cutKeyForItemId,
 	dedupeResultRows,
 	loadResultRows,
-	placeholderOnlyNoteCount,
 	resultRowIsUsable,
+	withoutContentFreeNotes,
 	type AccuracyResultRow,
 } from "./result-rows.js";
 
@@ -56,6 +63,17 @@ function numberArg(args: readonly string[], name: string, fallback: number): num
 		throw new Error(`--${name} must be a positive number; received ${raw}`);
 	}
 	return parsed;
+}
+
+/** How a content-free note is scored: `raw` counts it, `clean` is what delivery shows. */
+type JunkNoteView = "raw" | "clean";
+
+function junkNoteViewArg(args: readonly string[]): JunkNoteView {
+	const raw = argValue(args, "junk-notes") ?? "raw";
+	if (raw !== "raw" && raw !== "clean") {
+		throw new Error(`--junk-notes must be "raw" or "clean"; received ${raw}`);
+	}
+	return raw;
 }
 
 /** Per-arm aggregate for one case, folded across that case's repeats. */
@@ -84,6 +102,7 @@ function main(): void {
 	const inputPath = argValue(args, "in") ?? DEFAULT_INPUT;
 	const seed = numberArg(args, "seed", 20_260_912);
 	const iterations = numberArg(args, "iterations", 10_000);
+	const junkNotes = junkNoteViewArg(args);
 	const loaded = loadResultRows(inputPath);
 	const { rows, superseded } = dedupeResultRows(loaded, inputPath);
 
@@ -91,7 +110,10 @@ function main(): void {
 	// Provider failures written before the runner classified them (no usage, empty
 	// advise view) still carry silence/miss verdicts; counting them would fabricate
 	// observations, so they are excluded here too.
-	const usable = rows.filter((row) => resultRowIsUsable(row));
+	const usableRows = rows.filter((row) => resultRowIsUsable(row));
+	// `clean` scores the rows the way delivery does; every downstream rate reads
+	// `usable`, so the switch is one substitution rather than a second code path.
+	const usable = junkNotes === "clean" ? withoutContentFreeNotes(usableRows) : usableRows;
 	const excluded = rows.length - usable.length;
 	const items = [...new Set(usable.map((row) => row.itemId))].sort();
 	const repsByKey = new Map<string, number>();
@@ -110,10 +132,12 @@ function main(): void {
 			`resume     : ${String(superseded)} superseded row(s) collapsed (a retry after a provider failure re-ran a recorded key)`,
 		);
 	}
-	const placeholders = placeholderOnlyNoteCount(usable);
-	if (placeholders > 0) {
+	const contentFreeNotes = contentFreeNoteCount(usableRows);
+	if (contentFreeNotes > 0) {
 		console.log(
-			`junk notes : ${String(placeholders)} usable rows carry a literal "placeholder" note (counts as a note; inflates FP-rate)`,
+			junkNotes === "clean"
+				? `junk notes : ${String(contentFreeNotes)} usable row(s) carried a content-free note; scored as no-note for this view.`
+				: `junk notes : ${String(contentFreeNotes)} usable row(s) carry a content-free note production suppresses at delivery (counts as a note here, so this rate is an upper bound); re-run with --junk-notes clean for the delivered view.`,
 		);
 	}
 	const repCounts = [...new Set(repsByKey.values())].sort((a, b) => a - b);

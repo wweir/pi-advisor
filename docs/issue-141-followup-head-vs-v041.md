@@ -4,6 +4,8 @@
 
 Date: 2026-09-14. Protocol: `accuracy-experiment-v1`. **Full-corpus live run, 5 repeats per case per arm** (360 reviews).
 
+_Repo copy and the posted comment were both corrected on 2026-09-14 after the first posting; the earlier text claimed the raw and cleaned silence rates agreed. Both now report raw `+2.2pp [0.0, +6.7]` and delivered `+0.0pp [−6.7, +6.7]`._
+
 Bar vs this run:
 
 | Gate | Bar | This run |
@@ -11,7 +13,7 @@ Bar vs this run:
 | Independent silence cases | 30 | **9** `clean` item groups |
 | Reps per case per configuration | ≥5 | **5** (met) |
 | History-only finding recall | +10pp vs a baseline that still scores the same cases as **finding** (miss if truncated away) | **not measured** — this corpus is arm-fair, so v0.4.1 tail rows are `expected=silence` and have no recall denominator |
-| Visible-window recall / FP CIs | 95% paired, must sit inside the recorded margins | visible recall **+35.6pp** and tokens **+7.9%** pass; **FP CI upper bound +6.7pp exceeds ±5pp**; floors unmet anyway |
+| Visible-window recall / FP CIs | 95% paired, must sit inside the recorded margins | visible recall **+35.6pp** and tokens **+7.9%** pass; **FP CI upper bound +6.7pp exceeds ±5pp** (raw and delivered alike); floors unmet anyway |
 
 `+35.6pp` toolresult recall is a real paired gain on this corpus, but 9 sessions is still far below the 30+30 floor. Tail 8/45 and reasoning 6/45 are **retention/render diagnostics**, not a history-only recall delta.
 
@@ -35,7 +37,7 @@ v0.4.1's `new` arm is **not** a no-reasoning sample. Spending both arms there wo
 - `datasetHash` `9e7b6a8a7a1fd06c` (identical on both files). `budgetTokens` 20000. `protocol` `accuracy-experiment-v1`.
 - Model: `ollama-cloud/deepseek-v4.1-flash`; provider-reported `deepseek-v4.1-flash` on **all 360** rows; `thinkingLevel: "off"`.
 - Repeats: 5 per (item, arm). Zero run errors; all 360 rows usable.
-- Content-free notes: 1 of 360 (HEAD). Raw and cleaned rates agree, so junk notes are not a confound in this pair.
+- Content-free notes: **1 of 360** (HEAD) — a literal `placeholder` on `ctx-06-clean` rep 1, i.e. exactly on the paired silence stratum. Raw scoring counts it as a false positive; production (`isContentFreeAdvice`) drops it before delivery. The paired silence FP is therefore reported both ways (`--junk-notes clean` is the delivered view): raw **+2.2pp [0.0, +6.7]**, delivered **+0.0pp [−6.7, +6.7]**. Both intervals still reach +6.7pp, so the false-positive gate is unmet on either reading, but the raw point estimate is an upper bound driven by one note that was never delivered — not a measured quietness regression.
 
 | Artifact                                           | SHA-256                                                            | promptHash         | harnessHash        | sourceCommit   |
 | -------------------------------------------------- | ------------------------------------------------------------------ | ------------------ | ------------------ | -------------- |
@@ -51,7 +53,10 @@ Raw jsonl stays gitignored (real-session derivatives). Tracked copies of this no
 | Stratum                                   | HEAD          | v0.4.1        | Δ HEAD−v0.4.1 (95% CI)                                       |
 | ----------------------------------------- | ------------- | ------------- | ------------------------------------------------------------ |
 | **Visible finding (`toolresult`) recall** | 36/45 = 80.0% | 20/45 = 44.4% | **+35.6pp [+15.6, +53.3]** (McNemar exact p = 0.070)         |
-| **Silence (`clean`) FP**                  | 45/45 = 100%  | 44/45 = 97.8% | **+2.2pp [0.0, +6.7]** (interval reaches past the ±5pp band) |
+| **Silence (`clean`) FP** — raw            | 45/45 = 100%  | 44/45 = 97.8% | **+2.2pp [0.0, +6.7]** (interval reaches past the ±5pp band) |
+| **Silence (`clean`) FP** — delivered      | 44/45 = 97.8% | 44/45 = 97.8% | **+0.0pp [−6.7, +6.7]** (still reaches past +5pp)            |
+
+Delivered = the one content-free note dropped, as production does before showing a note. The two views disagree on the point estimate and agree on the upper bound, so quote both whenever this stratum is cited.
 
 The clean-silence stratum is effectively **saturated** on both trees (≈98–100% of clean items draw a note), so it carries almost no discriminating power; it is a false-alarm _ceiling_, not a quietness score.
 
