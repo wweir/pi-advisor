@@ -58,7 +58,7 @@ Whole-note placeholders (`placeholder`, `placeholder2`, `y`, `probe (will not be
 `ollama-cloud/deepseek-v4.1-flash` produced 1 content-free note (HEAD `ctx-06-clean` rep 1) in 360 reviews. That single note sits on the paired silence stratum, so this run must be read in both views: raw silence FP `+2.2pp [0.0, +6.7]` and delivered `+0.0pp [−6.7, +6.7]` (upper bound +6.7pp either way). Raw is the default; add `--junk-notes clean` to `analyze-accuracy-paired.ts` for the delivered view, which is what a user actually sees.
 
 ```bash
-tsx scripts/f9-experiment/analyze-accuracy-paired.ts --in docs/internal/accuracy-ab-head-vs-v041-ollama-full.jsonl --junk-notes clean
+bun scripts/f9-experiment/analyze-accuracy-paired.ts --in docs/internal/accuracy-ab-head-vs-v041-ollama-full.jsonl --junk-notes clean
 ```
 
 ---
