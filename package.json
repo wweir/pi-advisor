@@ -72,7 +72,8 @@
 		"@earendil-works/pi-agent-core": ">=0.81.1 <0.85.0",
 		"@earendil-works/pi-ai": ">=0.81.1 <0.85.0",
 		"@earendil-works/pi-coding-agent": ">=0.81.1 <0.85.0",
-		"@earendil-works/pi-tui": ">=0.81.1 <0.85.0"
+		"@earendil-works/pi-tui": ">=0.81.1 <0.85.0",
+		"typebox": "*"
 	},
 	"peerDependenciesMeta": {
 		"@earendil-works/pi-agent-core": {
@@ -82,6 +83,9 @@
 			"optional": true
 		},
 		"@earendil-works/pi-tui": {
+			"optional": true
+		},
+		"typebox": {
 			"optional": true
 		}
 	},
@@ -102,12 +106,12 @@
 		"oxlint": "1.78.0",
 		"prettier": "3.8.2",
 		"tsx": "4.21.0",
+		"typebox": "1.1.38",
 		"typescript": "5.9.3",
 		"typescript-eslint": "8.53.1",
 		"vitest": "4.0.18"
 	},
 	"dependencies": {
-		"typebox": "1.1.38",
 		"yaml": "^2.9.0"
 	}
 }

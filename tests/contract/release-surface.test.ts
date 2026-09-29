@@ -12,6 +12,8 @@ const manifest = JSON.parse(readFileSync("package.json", "utf8")) as {
 	publishConfig?: { access?: string; provenance?: boolean; tag?: string };
 	pi?: { extensions?: string[]; image?: string };
 	peerDependencies?: Record<string, string>;
+	peerDependenciesMeta?: Record<string, { optional?: boolean }>;
+	dependencies?: Record<string, string>;
 	engines?: { node?: string };
 };
 const readme = readFileSync("README.md", "utf8");
@@ -54,14 +56,20 @@ describe("public release surface", () => {
 
 	it("documents official compatibility, install, update, and uninstall guidance", () => {
 		expect(manifest.engines?.node).toBe(">=22.19.0");
-		for (const packageName of [
+		const piPackages = [
 			"@earendil-works/pi-agent-core",
 			"@earendil-works/pi-ai",
 			"@earendil-works/pi-coding-agent",
 			"@earendil-works/pi-tui",
-		]) {
+		];
+		for (const packageName of piPackages) {
 			expect(manifest.peerDependencies?.[packageName], packageName).toBe(">=0.81.1 <0.85.0");
+			expect(manifest.dependencies?.[packageName], packageName).toBeUndefined();
 		}
+		expect(manifest.peerDependencies?.typebox).toBe("*");
+		expect(manifest.peerDependenciesMeta?.typebox?.optional).toBe(true);
+		expect(manifest.dependencies?.typebox).toBeUndefined();
+		expect(manifest.dependencies?.yaml).toBe("^2.9.0");
 		for (const document of compatibilityDocs) {
 			expect(document.content, document.path).toContain(">=22.19.0");
 			expect(document.content, document.path).toContain(">=0.81.1 <0.85.0");

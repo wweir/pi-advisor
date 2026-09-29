@@ -61,6 +61,7 @@ const projectManifest = JSON.parse(readFileSync(join(projectRoot, "package.json"
 const expectedPiVersion =
 	process.env.PI_EXPECTED_VERSION ??
 	projectManifest.devDependencies?.["@earendil-works/pi-coding-agent"];
+const expectedTypeboxVersion = projectManifest.devDependencies?.typebox;
 
 function runPi(args: string[], cwd: string, env: NodeJS.ProcessEnv, input?: string) {
 	return spawnSync(piExecutable, args, {
@@ -138,11 +139,16 @@ describe("packed Pi package", () => {
 			) as {
 				private?: boolean;
 				dependencies?: Record<string, string>;
+				peerDependencies?: Record<string, string>;
+				peerDependenciesMeta?: Record<string, { optional?: boolean }>;
 				pi?: { extensions?: string[] };
 				publishConfig?: object;
 			};
 			expect(packedManifest.private).not.toBe(true);
-			expect(packedManifest.dependencies).toMatchObject({ typebox: "1.1.38", yaml: "^2.9.0" });
+			expect(packedManifest.dependencies).toEqual({ yaml: "^2.9.0" });
+			expect(packedManifest.peerDependencies?.typebox).toBe("*");
+			expect(packedManifest.peerDependenciesMeta?.typebox?.optional).toBe(true);
+			expect(expectedTypeboxVersion, "devDependencies.typebox").toBeDefined();
 			expect(packedManifest.pi?.extensions).toEqual(["./src/index.ts"]);
 			expect(packedManifest.publishConfig).toMatchObject({ access: "public", provenance: true });
 
@@ -158,6 +164,7 @@ describe("packed Pi package", () => {
 							"@earendil-works/pi-coding-agent": `file:${join(projectRoot, "node_modules", "@earendil-works", "pi-coding-agent")}`,
 							"@earendil-works/pi-tui": `file:${join(projectRoot, "node_modules", "@earendil-works", "pi-tui")}`,
 							"@ribbons-digital/pi-advisor": `file:${archive}`,
+							typebox: expectedTypeboxVersion,
 						},
 					},
 					null,

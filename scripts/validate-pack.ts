@@ -21,7 +21,9 @@ interface PackageManifest {
 	publishConfig?: { access?: string; provenance?: boolean };
 	pi?: { extensions?: string[] };
 	peerDependencies?: Record<string, string>;
+	peerDependenciesMeta?: Record<string, { optional?: boolean }>;
 	dependencies?: Record<string, string>;
+	optionalDependencies?: Record<string, string>;
 	engines?: { node?: string };
 }
 
@@ -54,23 +56,38 @@ if (manifest.pi?.extensions?.length !== 1 || manifest.pi.extensions[0] !== "./sr
 if (manifest.types !== "./src/index.ts" || manifest.exports?.["."] === undefined) {
 	throw new Error("Package root TypeScript exports are incomplete");
 }
-for (const name of [
+const piPackages = [
 	"@earendil-works/pi-agent-core",
 	"@earendil-works/pi-ai",
 	"@earendil-works/pi-coding-agent",
 	"@earendil-works/pi-tui",
-] as const) {
+] as const;
+for (const name of [...piPackages, "typebox", "@sinclair/typebox"]) {
+	if (
+		manifest.dependencies?.[name] !== undefined ||
+		manifest.optionalDependencies?.[name] !== undefined
+	) {
+		throw new Error(
+			`Host-provided package ${name} must not be a runtime dependency; declare it in peerDependencies`,
+		);
+	}
+}
+for (const name of piPackages) {
 	if (manifest.peerDependencies?.[name] !== ">=0.81.1 <0.85.0") {
 		throw new Error(`Unsupported or missing Pi peer range for ${name}`);
 	}
 }
+if (manifest.peerDependencies?.typebox !== "*") {
+	throw new Error('Host-provided typebox must be declared in peerDependencies with a "*" range');
+}
+if (manifest.peerDependenciesMeta?.typebox?.optional !== true) {
+	throw new Error("Host-provided typebox must be optional in peerDependenciesMeta");
+}
 if (manifest.engines?.node !== ">=22.19.0") {
 	throw new Error("Node engine must be >=22.19.0");
 }
-for (const name of ["typebox", "yaml"] as const) {
-	if (manifest.dependencies?.[name] === undefined) {
-		throw new Error(`Runtime ${name} dependency is missing`);
-	}
+if (manifest.dependencies?.yaml === undefined) {
+	throw new Error("Runtime yaml dependency is missing");
 }
 
 const required = [
