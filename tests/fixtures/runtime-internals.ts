@@ -94,6 +94,8 @@ export interface AdvisorRuntimeTestInternals {
 	status: AdvisorRuntimeStatus;
 	readonly pi: ExtensionAPI;
 	persistState(): void;
+	scheduleCadencedUpdate(update: QueuedAdvisorUpdate): void;
+	enqueue(update: QueuedAdvisorUpdate): void;
 	coalescePending(
 		current: QueuedAdvisorUpdate | undefined,
 		incoming: QueuedAdvisorUpdate,
