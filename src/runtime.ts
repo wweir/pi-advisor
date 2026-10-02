@@ -2636,7 +2636,11 @@ export class AdvisorRuntime {
 	}
 
 	private scheduleCadencedUpdate(update: QueuedAdvisorUpdate): void {
-		if (this.draining) {
+		if (this.draining || this.pendingUpdate !== undefined) {
+			// A queued update already owns the single durable queue slot (either a
+			// drain is in flight or a superseding update is waiting). Route through
+			// enqueue so the evidence joins that slot instead of writing a second
+			// one; pendingUpdate and throttledUpdate must never coexist.
 			this.enqueue(update);
 			return;
 		}
@@ -2795,7 +2799,9 @@ export class AdvisorRuntime {
 		if (this.draining) {
 			let base = this.pendingUpdate;
 			const throttled = this.throttledUpdate;
-			if (throttled?.heldForMaterialTurn === true) {
+			if (throttled !== undefined) {
+				// pendingUpdate is about to be written, so any held evidence in the
+				// throttled slot must be folded in and the second slot cleared.
 				base = this.coalescePending(base, throttled);
 				delete this.throttledUpdate;
 			}

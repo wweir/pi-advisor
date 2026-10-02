@@ -1560,6 +1560,103 @@ describe.sequential("Slice 3A branch, compaction, and persistence lifecycle", ()
 		}
 	});
 
+	it("routes a scheduled held update into an existing queued slot instead of coexisting with it", async () => {
+		const manager = SessionManager.inMemory();
+		const primary = createPrimaryProvider([]);
+		const advisor = createAdvisorProvider([]);
+		let runtime: AdvisorRuntime | undefined;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			sessionManager: manager,
+			extensions: [extensionFor(configFor(advisor), (value) => (runtime = value))],
+			tools: [],
+			mode: "rpc",
+		});
+		try {
+			if (runtime === undefined) throw new Error("Expected invariant runtime");
+			const activeRuntime = runtime;
+			const window = cursorAtTail(manager.getBranch());
+			const queued = {
+				text: "QUEUED-SUPERSEDING-EVIDENCE",
+				entryCount: 1,
+				truncated: false,
+				window,
+				turnNumber: 1,
+				successfulMemoryTexts: new Set<string>(),
+			};
+			Reflect.set(activeRuntime, "pendingUpdate", queued);
+			Reflect.set(activeRuntime, "draining", false);
+			runtimeInternals(activeRuntime).scheduleCadencedUpdate({
+				text: "HELD-MATERIAL-EVIDENCE",
+				entryCount: 1,
+				truncated: false,
+				window,
+				turnNumber: 2,
+				successfulMemoryTexts: new Set<string>(),
+				heldForMaterialTurn: true,
+			});
+			const internals = runtimeInternals(activeRuntime);
+			expect(internals.throttledUpdate).toBeUndefined();
+			expect(internals.pendingUpdate?.text).toContain("QUEUED-SUPERSEDING-EVIDENCE");
+			expect(internals.pendingUpdate?.text).toContain("HELD-MATERIAL-EVIDENCE");
+			expect(() => internals.persistState()).not.toThrow();
+			Reflect.deleteProperty(activeRuntime, "pendingUpdate");
+			Reflect.deleteProperty(activeRuntime, "throttledUpdate");
+		} finally {
+			await harness.dispose();
+		}
+	});
+
+	it("folds a draining throttled update into the queued slot instead of keeping both", async () => {
+		const manager = SessionManager.inMemory();
+		const primary = createPrimaryProvider([]);
+		const advisor = createAdvisorProvider([]);
+		let runtime: AdvisorRuntime | undefined;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			sessionManager: manager,
+			extensions: [extensionFor(configFor(advisor), (value) => (runtime = value))],
+			tools: [],
+			mode: "rpc",
+		});
+		try {
+			if (runtime === undefined) throw new Error("Expected invariant runtime");
+			const activeRuntime = runtime;
+			const window = cursorAtTail(manager.getBranch());
+			Reflect.set(activeRuntime, "draining", true);
+			Reflect.set(activeRuntime, "throttledUpdate", {
+				text: "QUIESCENCE-HELD-EVIDENCE",
+				entryCount: 1,
+				truncated: false,
+				window,
+				turnNumber: 1,
+				successfulMemoryTexts: new Set<string>(),
+				heldForQuiescence: true,
+				heldSince: Date.now(),
+			});
+			const internals = runtimeInternals(activeRuntime);
+			internals.enqueue({
+				text: "FRESH-EVIDENCE",
+				entryCount: 1,
+				truncated: false,
+				window,
+				turnNumber: 2,
+				successfulMemoryTexts: new Set<string>(),
+			});
+			expect(internals.throttledUpdate).toBeUndefined();
+			expect(internals.pendingUpdate?.text).toContain("QUIESCENCE-HELD-EVIDENCE");
+			expect(internals.pendingUpdate?.text).toContain("FRESH-EVIDENCE");
+			expect(() => internals.persistState()).not.toThrow();
+			Reflect.set(activeRuntime, "draining", false);
+			Reflect.deleteProperty(activeRuntime, "pendingUpdate");
+			Reflect.deleteProperty(activeRuntime, "throttledUpdate");
+		} finally {
+			await harness.dispose();
+		}
+	});
+
 	it("writes no deferred note content to lifecycle snapshots when retention is zero", async () => {
 		const note = "Do not retain this note across exit when retention is zero.";
 		const primary = createPrimaryProvider([
