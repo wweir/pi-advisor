@@ -68,6 +68,7 @@ import {
 	loadPersistedJsonl,
 	registerUserProviderExtensions,
 } from "./harness.js";
+import { noteMatchesTerms } from "./result-rows.js";
 
 const REVIEW_TOKEN_CEILING = 1_000_000;
 const COST_CEILING_USD = 25;
@@ -181,10 +182,7 @@ function verdictForHist(
 		return note === undefined ? "silence-correct" : "false-positive";
 	}
 	if (note === undefined) return "miss";
-	const normalized = note.toLocaleLowerCase("en-US");
-	return terms.some((term) => normalized.includes(term.toLocaleLowerCase("en-US")))
-		? "hit"
-		: "miss";
+	return noteMatchesTerms(note, terms) ? "hit" : "miss";
 }
 
 interface AdviseViews {

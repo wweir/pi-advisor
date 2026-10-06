@@ -33,8 +33,6 @@ import { isNumberValue } from "../../src/value-guards.js";
 /** `control` = verbatim history (v0.4.1 behaviour); `treatment` = deterministic compression. */
 export type AbArm = "control" | "treatment";
 
-export const AB_ARMS: readonly AbArm[] = ["control", "treatment"];
-
 /**
  * Case kinds. The reviewer's bar names three distinct populations, and they are
  * scored separately because they answer different questions:

@@ -20,11 +20,9 @@
  * - The evaluation note is written to `docs/f9-evaluation.md`.
  */
 import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join, sep } from "node:path";
-import { pathToFileURL } from "node:url";
+import { dirname, join } from "node:path";
 
 import {
-	calculateContextTokens,
 	createAgentSession,
 	DefaultResourceLoader,
 	getAgentDir,
@@ -32,7 +30,6 @@ import {
 	ModelRuntime,
 	SessionManager,
 	SettingsManager,
-	type AgentSession,
 } from "@earendil-works/pi-coding-agent";
 import type { Model } from "@earendil-works/pi-ai";
 
@@ -44,8 +41,8 @@ import {
 	tieredPromptUpdateRelevance,
 } from "../../src/experiment.js";
 import { buildAdvisorSystemPrompt } from "../../src/runtime.js";
-import { isFunctionValue } from "../../src/value-guards.js";
 import { F9_DATASET, type F9DatasetExpectation } from "./dataset.js";
+import { lastAssistantUsage, registerUserProviderExtensions } from "./harness.js";
 
 const REVIEW_TOKEN_CEILING = 1_000_000;
 const COST_CEILING_USD = 25;
@@ -59,12 +56,6 @@ interface RunResult {
 	stopReason: string;
 	errorMessage?: string;
 	verdict: "hit" | "miss" | "false-positive" | "silence-correct" | "run-error";
-	tokens: number;
-	costUsd: number;
-	responseModel?: string;
-}
-
-interface AssistantUsage {
 	tokens: number;
 	costUsd: number;
 	responseModel?: string;
@@ -91,24 +82,6 @@ function verdictFor(
 	return expectation.terms.some((term) => normalized.includes(term.toLocaleLowerCase("en-US")))
 		? "hit"
 		: "miss";
-}
-
-function lastAssistantUsage(session: AgentSession) {
-	for (let index = session.messages.length - 1; index >= 0; index--) {
-		const message = session.messages[index];
-		if (message?.role !== "assistant") continue;
-		const assistant = message;
-		if (assistant.stopReason === "aborted" || assistant.stopReason === "error") continue;
-		const tokens = calculateContextTokens(assistant.usage);
-		const usage: AssistantUsage = {
-			tokens,
-			costUsd: assistant.usage.cost.total,
-		};
-		if (assistant.responseModel !== undefined) usage.responseModel = assistant.responseModel;
-		else if (assistant.model.length > 0) usage.responseModel = assistant.model;
-		return usage;
-	}
-	return { tokens: 0, costUsd: 0 };
 }
 
 async function runArm(options: {
@@ -309,82 +282,6 @@ ${rows}
 	return path;
 }
 
-/**
- * Loads the user provider extension whose directory name matches the
- * configured model's provider id (for example `vibeproxy` for
- * `vibeproxy/claude-opus-4-8`) so the configured Advisor model can resolve
- * with real credentials. Loading requires the explicit opt-in env flag
- * `PI_ADVISOR_EXPERIMENT_PROVIDER_EXTENSION=<providerId>` that names exactly
- * the extension to execute, because the extension runs with full process
- * permissions outside Pi's normal extension loading path; naming a provider
- * in the WATCHDOG configuration alone never triggers execution. Only that
- * single extension is executed, only its provider registration is forwarded
- * into the experiment model runtime, and the provider id must be a plain
- * single-segment directory name.
- */
-async function registerUserProviderExtensions(
-	agentDir: string,
-	providerId: string,
-	modelRuntime: ModelRuntime,
-): Promise<string[]> {
-	if (process.env.PI_ADVISOR_EXPERIMENT_PROVIDER_EXTENSION !== providerId) {
-		console.warn(
-			`[f9] the configured provider ${providerId} is not available from the built-in runtime. Set PI_ADVISOR_EXPERIMENT_PROVIDER_EXTENSION=${providerId} to load its extension from ${join(agentDir, "extensions", providerId)} after reviewing the extension source.`,
-		);
-		return [];
-	}
-	// The provider id comes from the User WATCHDOG configuration, so it must be
-	// a plain single-segment directory name before it is used to build a path.
-	if (!/^[a-z0-9][a-z0-9_-]*$/iu.test(providerId)) {
-		console.warn(
-			`[f9] refusing to load a provider extension for unsafe provider id ${JSON.stringify(providerId)}`,
-		);
-		return [];
-	}
-	const extensionsDir = join(agentDir, "extensions");
-	const entryPath = join(extensionsDir, providerId, "index.ts");
-	if (!entryPath.startsWith(`${extensionsDir}${sep}`)) return [];
-	try {
-		interface ProviderRegistrationApi {
-			registerProvider(
-				registeredProviderId: string,
-				config: Parameters<ModelRuntime["registerProvider"]>[1],
-			): void;
-			registerCommand(): void;
-			on(): void;
-		}
-		// SAFETY: dynamic provider modules are validated for a callable default before execution.
-		const module = (await import(pathToFileURL(entryPath).href)) as {
-			default?: (pi: ProviderRegistrationApi) => Promise<void> | void;
-		};
-		if (!isFunctionValue(module.default)) return [];
-		console.warn(
-			`[f9] executing user extension ${providerId} outside Pi's extension loading path to resolve the configured provider. Review the extension source before running this experiment.`,
-		);
-		const adapter: ProviderRegistrationApi = {
-			registerProvider: (
-				registeredProviderId: string,
-				config: Parameters<ModelRuntime["registerProvider"]>[1],
-			) => {
-				modelRuntime.registerProvider(registeredProviderId, config);
-			},
-			registerCommand: () => {
-				// The experiment harness needs only provider registration.
-			},
-			on: () => {
-				// Event hooks are irrelevant to provider registration.
-			},
-		};
-		await Promise.resolve(module.default(adapter));
-		return [providerId];
-	} catch (error) {
-		console.warn(
-			`[f9] provider extension ${providerId} could not load: ${error instanceof Error ? error.message : String(error)}`,
-		);
-		return [];
-	}
-}
-
 async function main(): Promise<void> {
 	const agentDir = getAgentDir();
 	const cwd = process.cwd();
@@ -415,7 +312,7 @@ async function main(): Promise<void> {
 	let available = registry.getAvailable();
 	if (!available.some((model) => `${model.provider}/${model.id}` === modelReference)) {
 		const providerId = modelReference.slice(0, modelReference.indexOf("/"));
-		const loaded = await registerUserProviderExtensions(agentDir, providerId, modelRuntime);
+		const loaded = await registerUserProviderExtensions(agentDir, providerId, modelRuntime, "f9");
 		if (loaded.length > 0) {
 			console.log(`[f9] loaded provider extension: ${loaded.join(", ")}`);
 			await registry.refresh();

@@ -56,6 +56,7 @@ import {
 	loadPersistedJsonl,
 	registerUserProviderExtensions,
 } from "./harness.js";
+import { noteMatchesTerms } from "./result-rows.js";
 
 // The generated dataset lives in a git-ignored path (redacted real-session
 // transcripts, too large/privacy-sensitive to commit), so it is loaded at
@@ -151,10 +152,7 @@ function verdictFor(
 		return note === undefined ? "silence-correct" : "false-positive";
 	}
 	if (note === undefined) return "miss";
-	const normalized = note.toLocaleLowerCase("en-US");
-	return expectation.terms.some((term) => normalized.includes(term.toLocaleLowerCase("en-US")))
-		? "hit"
-		: "miss";
+	return noteMatchesTerms(note, expectation.terms) ? "hit" : "miss";
 }
 
 async function runContextArm(options: {

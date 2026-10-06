@@ -1,15 +1,15 @@
 /**
- * Shared plumbing for the untracked F9 runners (run-context, run-accuracy,
- * run-compare). `run.ts` stays self-contained so `pnpm experiment:f9` works
- * from a clean clone. Per-experiment verdicts, corpus loaders and summarizers
- * stay in their own scripts.
+ * Shared plumbing for the tracked F9 runners (run, run-context, run-accuracy,
+ * run-compare): usage extraction, provider-extension loading, and the
+ * fail-closed JSONL breakpoint-resume reader. Per-experiment verdicts, corpus
+ * loaders and summarizers stay in their own scripts.
  */
 import { readFile, writeFile } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import type { AgentSession, ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { calculateContextTokens } from "@earendil-works/pi-agent-core";
+import { calculateContextTokens } from "@earendil-works/pi-coding-agent";
 import type { Provider } from "@earendil-works/pi-ai";
 
 import { isFunctionValue, isRecordValue, isStringValue } from "../../src/value-guards.js";
