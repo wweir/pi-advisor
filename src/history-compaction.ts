@@ -41,8 +41,6 @@ export const NESTED_SLIM_TRUNCATION_MARKER = "\n[Older Advisor tool result trimm
 
 export interface AdvisorNestedSlim {
 	messages: AdvisorHistoryMessage[];
-	/** Total bytes removed across all slimmed messages. */
-	savingsBytes: number;
 	/** Number of messages that were actually modified. */
 	degraded: number;
 }
@@ -55,7 +53,6 @@ export interface AdvisorHistoryMessage {
 
 export interface AdvisorHistoryCompaction {
 	messages: AdvisorHistoryMessage[];
-	summaryText: string;
 	compressedCycles: number;
 	keptCycles: number;
 }
@@ -247,7 +244,6 @@ export function compressAdvisorHistory(
 	if (cycles.length <= keepRecentCycles) {
 		return {
 			messages: [...messages],
-			summaryText: "",
 			compressedCycles: 0,
 			keptCycles: cycles.length,
 		};
@@ -258,7 +254,6 @@ export function compressAdvisorHistory(
 	if (lastCompressed === undefined || firstCompressed === undefined) {
 		return {
 			messages: [...messages],
-			summaryText: "",
 			compressedCycles: 0,
 			keptCycles: cycles.length,
 		};
@@ -307,7 +302,6 @@ export function compressAdvisorHistory(
 	if (lines.length === 0) {
 		return {
 			messages: [...messages],
-			summaryText: "",
 			compressedCycles: 0,
 			keptCycles: cycles.length,
 		};
@@ -334,7 +328,6 @@ export function compressAdvisorHistory(
 	}
 	return {
 		messages: [...keptHead, summaryMessage, ...keptTail],
-		summaryText,
 		compressedCycles: nextOrdinal - 1,
 		keptCycles: totalUpdates - (nextOrdinal - 1),
 	};
@@ -392,10 +385,10 @@ function hasThinkingBlock(content: SlimContent): boolean {
 /** Whether an opaque redacted/encrypted thinking block must be kept verbatim. */
 function isRetainedThinking(part: SlimPart): boolean {
 	if (!isRecordValue<SlimPart>(part) || part.type !== "thinking") return false;
-	return (
-		part.redacted === true ||
-		(part.thinkingSignature !== undefined && !isStringValue(part.thinking))
-	);
+	// `thinking` is always a string, so signature presence (not its absence) is
+	// what marks a block the provider needs for same-model replay. Redacted
+	// blocks carry their opaque payload in `thinkingSignature` too.
+	return part.redacted === true || part.thinkingSignature !== undefined;
 }
 
 /** Bulk text thinking is droppable; opaque/redacted thinking and non-thinking blocks stay. */
@@ -541,7 +534,6 @@ export function compressNestedMessages(
 	const head = messages.slice(0, messages.length - keep);
 	const tail = messages.slice(messages.length - keep);
 	const out: AdvisorHistoryMessage[] = [];
-	let savingsBytes = 0;
 	let degraded = 0;
 	for (const message of head) {
 		// SAFETY: AdvisorHistoryMessage.content is either a plain string or a
@@ -559,10 +551,9 @@ export function compressNestedMessages(
 		// string-or-block-array content contract as AdvisorHistoryMessage.
 		const after = contentBytes(candidate.content as SlimContent);
 		if (after < before) {
-			savingsBytes += before - after;
 			degraded++;
 		}
 		out.push(candidate);
 	}
-	return { messages: [...out, ...tail], savingsBytes, degraded };
+	return { messages: [...out, ...tail], degraded };
 }

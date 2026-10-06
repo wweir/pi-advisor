@@ -154,7 +154,6 @@ describe("compressAdvisorHistory", () => {
 			.map((m: AdvisorHistoryMessage) => isString(m.content))
 			.join("\n");
 		expect(allContent).toContain("findingKey=auth-race");
-		expect(allContent).toContain("auth-race");
 		expect(second.compressedCycles).toBe(2);
 	});
 
@@ -492,7 +491,6 @@ describe("compressNestedMessages", () => {
 		expect(text.includes("\uFFFD")).toBe(false);
 		// valid: every kept char is a whole 中 (no partial sequences)
 		const head = text.slice(0, text.indexOf(NESTED_SLIM_TRUNCATION_MARKER));
-		expect(head.length % 1).toBe(0);
 		expect(Array.from(head).every((character) => character === "中")).toBe(true);
 	});
 
@@ -524,38 +522,61 @@ describe("compressNestedMessages", () => {
 			role: "assistant",
 			content: [{ type: "thinking", thinking: "only thinking here" }],
 		};
-		const result = compressNestedMessages([onlyThinking, { role: "user", content: "recent" }]);
+		// > NESTED_SLIM_KEEP_RECENT_MESSAGES so the assistant falls in the slim head
+		// and stripAssistantThinking actually runs on it.
+		const messages: AdvisorHistoryMessage[] = [
+			onlyThinking,
+			{ role: "user", content: "filler 1" },
+			{ role: "user", content: "filler 2" },
+			{ role: "user", content: "filler 3" },
+			{ role: "user", content: "recent" },
+		];
+		const result = compressNestedMessages(messages);
 		// assistant was left intact (dropping it would orphan the next turn)
 		expect(result.degraded).toBe(0);
 		expect(result.messages[0]).toEqual(onlyThinking);
 	});
 
-	it("keeps redacted/opaque thinking signatures for provider continuity", () => {
+	it("keeps signed and redacted thinking blocks for provider replay continuity", () => {
 		// SAFETY: a minimal assistant fixture message; the shape matches the
 		// advisor history content contract under test.
-		const redactedThinking: AdvisorHistoryMessage = {
+		const signedThinking: AdvisorHistoryMessage = {
 			role: "assistant",
 			content: [
+				{ type: "thinking", thinking: "bulk reasoning", thinkingSignature: "signed-payload" },
 				{ type: "thinking", thinking: "", redacted: true, thinkingSignature: "opaque-payload" },
 				{ type: "text", text: "survives" },
 			],
 		};
-		const result = compressNestedMessages([redactedThinking, { role: "user", content: "recent" }]);
-		// SAFETY: the fixture assistant message content is a block array; the
-		// redacted thinking block is retained by the slimmer by design.
+		const messages: AdvisorHistoryMessage[] = [
+			signedThinking,
+			{ role: "user", content: "filler 1" },
+			{ role: "user", content: "filler 2" },
+			{ role: "user", content: "filler 3" },
+			{ role: "user", content: "recent" },
+		];
+		const result = compressNestedMessages(messages);
+		// SAFETY: the fixture assistant message content is a block array; both
+		// thinking blocks are retained by the slimmer by design.
 		const content = result.messages[0]?.content as { type: string }[];
-		expect(content.some((part) => part.type === "thinking")).toBe(true);
+		expect(content.filter((part) => part.type === "thinking")).toHaveLength(2);
 		expect(result.degraded).toBe(0);
 	});
 
 	it("is deterministic across identical inputs", () => {
+		// > NESTED_SLIM_KEEP_RECENT_MESSAGES with an oversized toolResult so the
+		// build really slims; comparing two no-op results would guard nothing.
 		const build = () => [
 			assistantWithThinking("a", "t".repeat(600)),
 			bigToolResult("y".repeat(9_000)),
+			{ role: "user", content: "filler 1" },
+			{ role: "user", content: "filler 2" },
 			{ role: "user", content: "recent" },
 		];
+		const first = compressNestedMessages(build());
+		expect(first.degraded).toBeGreaterThan(0);
 		expect(JSON.stringify(compressNestedMessages(build()).messages)).toBe(
-			JSON.stringify(compressNestedMessages(build()).messages),
+			JSON.stringify(first.messages),
 		);
 	});
 });
