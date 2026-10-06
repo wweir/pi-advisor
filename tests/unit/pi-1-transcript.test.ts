@@ -58,8 +58,7 @@ describe("Pi 1.0 canonical Advisor evidence", () => {
 			expect(result.text).not.toContain("CANONICAL-POLICY-NOT-SENT");
 			expect(
 				Buffer.byteLength(
-					render(manager.getBranch(), 10, { effectiveSystemPrompt: effective.repeat(100) })
-						.text,
+					render(manager.getBranch(), 10, { effectiveSystemPrompt: effective.repeat(100) }).text,
 				),
 			).toBeLessThanOrEqual(40);
 		}

@@ -327,7 +327,7 @@ function renderBoundedEntries(
 	let toolResultTruncated = false;
 	let retainedEntryCount = 0;
 
-	const projected = buildSessionProjection(entries).messages;
+	const projected = buildSessionProjection([...entries]).messages;
 	const system = getCurrentSystemMessage(projected);
 	const messages: AgentMessage[] = projected.filter((message) => message.role !== "system");
 	if (system !== undefined) {
