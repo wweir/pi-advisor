@@ -2866,10 +2866,15 @@ export class AdvisorRuntime {
 			this.config.limits.maxPendingTranscriptBytes,
 			Math.max(1, this.config.context.maxUpdateTokens * 4),
 		);
+		// Metadata (successful memory texts) shares this same budget: deriving it
+		// from `maximum` keeps the combined prompt within the cap, whereas the
+		// config-wide half-share could exceed `maximum` and truncate ALL Executor
+		// evidence to a bare marker.
+		const metadataByteBudget = Math.floor(maximum * PENDING_MEMORY_METADATA_FRACTION);
 		const successfulMemoryTexts = boundNewestTexts(
 			[...(current?.successfulMemoryTexts ?? []), ...incoming.successfulMemoryTexts],
-			this.successfulMemoryTextItemBudget(),
-			this.successfulMemoryTextByteBudget(),
+			Math.min(MAX_PENDING_ADVICE_ITEMS, metadataByteBudget),
+			metadataByteBudget,
 		);
 		const metadataBytes = utf8TextSetBytes(successfulMemoryTexts);
 		const text = truncateUtf8TailBytes(
@@ -4402,8 +4407,8 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			// cadence to the configured ceiling immediately; a completed review resets it.
 			const adaptive = this.config.review.adaptiveCadence;
 			this.governorCadenceWidening = Math.max(
-				this.governorCadenceWidening,
-				Math.max(0, adaptive.maxMinTurnsBetweenReviews - this.config.limits.minTurnsBetweenReviews),
+				0,
+				adaptive.maxMinTurnsBetweenReviews - this.config.limits.minTurnsBetweenReviews,
 			);
 			this.status.effectiveMinTurnsBetweenReviews = this.effectiveMinTurnsBetweenReviews();
 			if (this.status.consecutiveGovernorSkips >= GOVERNOR_SKIP_PAUSE_COUNT) {
