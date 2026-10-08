@@ -1,7 +1,8 @@
 import { execFile, type ExecFileException } from "node:child_process";
 import { lstat, open, opendir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, matchesGlob, normalize, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, matchesGlob, normalize, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
 	createReadToolDefinition,
@@ -46,8 +47,34 @@ const MAX_GREP_FILE_BYTES = 1_000_000;
 const MAX_GREP_TOTAL_BYTES = 5_000_000;
 const GREP_TIMEOUT_MS = 2_000;
 
-function stripAtAlias(path: string): string {
-	return path.startsWith("@") ? path.slice(1) : path;
+const TOOL_PATH_UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
+
+/**
+ * Resolve a tool path exactly the way Pi's own `read` tool does before it touches
+ * the filesystem: normalize Unicode spaces, drop the `@` alias prefix, expand `~/`,
+ * and decode `file://` URLs. The protected-path policy and the delegated tool must
+ * agree on the resolved target — otherwise `~/.config/gcloud/credentials.db` is
+ * authorized as `<cwd>/~/.config/gcloud/credentials.db` and then read from the real
+ * home directory, bypassing every protected path.
+ */
+function resolveToolPath(cwd: string, inputPath: string): string {
+	let normalized = inputPath.replace(TOOL_PATH_UNICODE_SPACES, " ");
+	if (normalized.startsWith("@")) normalized = normalized.slice(1);
+	if (normalized === "~") normalized = homedir();
+	else if (
+		normalized.startsWith("~/") ||
+		(process.platform === "win32" && normalized.startsWith("~\\"))
+	) {
+		normalized = join(homedir(), normalized.slice(2));
+	}
+	if (/^file:\/\//i.test(normalized)) {
+		try {
+			normalized = fileURLToPath(normalized);
+		} catch {
+			// A malformed file URL is left verbatim; the policy below still judges it.
+		}
+	}
+	return resolve(cwd, normalized);
 }
 
 function comparePath(path: string): string {
@@ -102,18 +129,14 @@ export class ProtectedPathPolicy {
 		private readonly cwd: string,
 		security: AdvisorConfig["security"],
 	) {
-		this.additional = security.additionalProtectedPaths.map((path) =>
-			resolve(cwd, stripAtAlias(path)),
-		);
+		this.additional = security.additionalProtectedPaths.map((path) => resolveToolPath(cwd, path));
 		this.additionalTargets = Promise.all(this.additional.map(canonicalize));
-		this.exceptions = security.protectedPathExceptions.map((path) =>
-			resolve(cwd, stripAtAlias(path)),
-		);
+		this.exceptions = security.protectedPathExceptions.map((path) => resolveToolPath(cwd, path));
 		this.exceptionTargets = Promise.all(this.exceptions.map(canonicalize));
 	}
 
 	async allows(inputPath: string): Promise<boolean> {
-		const requested = resolve(this.cwd, stripAtAlias(inputPath));
+		const requested = resolveToolPath(this.cwd, inputPath);
 		const canonical = await canonicalize(requested);
 		const [additionalTargets, exceptionTargets] = await Promise.all([
 			this.additionalTargets,
@@ -266,7 +289,10 @@ function createReadTool(cwd: string, policy: ProtectedPathPolicy) {
 		}),
 		async execute(id, params, signal, onUpdate, ctx) {
 			if (!(await policy.allows(params.path))) return blockedResult();
-			const result = await base.execute(id, params, signal, onUpdate, ctx);
+			// Hand the delegated tool the same resolved path the policy authorized, so a
+			// `~`/`file://` alias cannot expand to a protected target after the check.
+			const absolute = resolveToolPath(cwd, params.path);
+			const result = await base.execute(id, { ...params, path: absolute }, signal, onUpdate, ctx);
 			return { ...result, details: { blocked: false, ...result.details } };
 		},
 	});
@@ -284,7 +310,7 @@ function createLsTool(cwd: string, policy: ProtectedPathPolicy) {
 		async execute(_id, params) {
 			const requested = params.path ?? ".";
 			if (!(await policy.allows(requested))) return blockedResult();
-			const absolute = resolve(cwd, stripAtAlias(requested));
+			const absolute = resolveToolPath(cwd, requested);
 			const limit = Math.max(1, Math.min(params.limit ?? 500, 2_000));
 			const scanBudget = Math.min(5_000, Math.max(100, limit * 4));
 			const visible: string[] = [];
@@ -321,7 +347,7 @@ function createFindTool(cwd: string, policy: ProtectedPathPolicy) {
 		async execute(_id, params) {
 			const requested = params.path ?? ".";
 			if (!(await policy.allows(requested))) return blockedResult();
-			const root = resolve(cwd, stripAtAlias(requested));
+			const root = resolveToolPath(cwd, requested);
 			const limit = Math.max(1, Math.min(params.limit ?? 1_000, 2_000));
 			const collected = await collectFiles(root, policy, limit * 4);
 			const matches = collected.files
@@ -473,7 +499,7 @@ function createGrepTool(cwd: string, policy: ProtectedPathPolicy) {
 		async execute(_id, params, signal) {
 			const requested = params.path ?? ".";
 			if (!(await policy.allows(requested))) return blockedResult();
-			const root = resolve(cwd, stripAtAlias(requested));
+			const root = resolveToolPath(cwd, requested);
 			const limit = Math.max(1, Math.min(params.limit ?? 100, 2_000));
 			let rootInfo;
 			try {
