@@ -4,9 +4,9 @@ import { Check } from "typebox/value";
 
 import {
 	adviceDedupeKey,
+	isAdviceSeverity,
 	type AcceptedAdvice,
 	type AdviceDedupeTag,
-	type AdviceSeverity,
 	type PersistedDedupeEntry,
 } from "./advice.js";
 import { HARD_LIMITS } from "./config.js";
@@ -390,10 +390,6 @@ function isBoundedSafeText<T>(value: T, maximumCharacters: number): value is T &
 	if (!isPersistedString(value) || value.length > maximumCharacters * 2) return false;
 	if (Array.from(value).length > maximumCharacters) return false;
 	return redactSecrets(value).text === value;
-}
-
-function isAdviceSeverity<T>(value: T): value is T & AdviceSeverity {
-	return value === "nit" || value === "concern" || value === "blocker";
 }
 
 type FindingKeyMetadataMode = "none" | "hash" | "hash-label";

@@ -5,11 +5,6 @@ export type ReadOnlyToolName = (typeof READ_ONLY_TOOL_NAMES)[number];
 
 export type AdvisorEffort = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
-export interface AdvisorSessionActivation {
-	enabled: boolean;
-	source: "user-default" | "session-command" | "cli-flag";
-}
-
 export interface AdvisorContextConfig {
 	maxFraction: number;
 	reserveTokens: number;
@@ -450,23 +445,3 @@ export function normalizeAdvisorConfig(input: AdvisorConfig): AdvisorConfig {
 		},
 	};
 }
-
-export interface ConfigValidationStrategy {
-	format: "yaml";
-	schema: "typebox-compiled";
-	unknownFields: "warn";
-	malformedUserConfig: "inactive";
-	malformedProjectConfig: "ignore-with-warning";
-	projectMerge: "narrow-only";
-	apply: "atomic-epoch-rebuild";
-}
-
-export const CONFIG_VALIDATION_STRATEGY: ConfigValidationStrategy = {
-	format: "yaml",
-	schema: "typebox-compiled",
-	unknownFields: "warn",
-	malformedUserConfig: "inactive",
-	malformedProjectConfig: "ignore-with-warning",
-	projectMerge: "narrow-only",
-	apply: "atomic-epoch-rebuild",
-};
