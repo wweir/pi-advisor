@@ -474,6 +474,8 @@ export interface AdviceDedupeEntryState {
 export interface AdviceDedupeSnapshot {
 	key: string;
 	entry: AdviceDedupeEntryState | undefined;
+	/** The oldest entry an `add` at capacity evicts, kept so a failed delivery can restore it. */
+	evicted?: { key: string; entry: AdviceDedupeEntryState };
 }
 
 const HASH_PATTERN = /^[a-f0-9]{64}$/u;
@@ -579,7 +581,7 @@ export class BoundedAdviceDedupe {
 	snapshotEntry(advice: AdviceDedupeIdentity): AdviceDedupeSnapshot {
 		const key = adviceDedupeKey(advice);
 		const entry = this.entries.get(key);
-		return {
+		const snapshot: AdviceDedupeSnapshot = {
 			key,
 			entry:
 				entry === undefined
@@ -588,6 +590,20 @@ export class BoundedAdviceDedupe {
 						? {}
 						: { metadata: { ...entry.metadata } },
 		};
+		// An `add` of a new key at capacity evicts the oldest entry. Capture it now, or the
+		// rollback path silently loses an already-delivered finding's dedupe record.
+		if (entry === undefined && this.entries.size >= this.capacity) {
+			const evictedKey = this.entries.keys().next().value;
+			if (evictedKey !== undefined) {
+				const evictedEntry = this.entries.get(evictedKey);
+				snapshot.evicted = {
+					key: evictedKey,
+					entry:
+						evictedEntry?.metadata === undefined ? {} : { metadata: { ...evictedEntry.metadata } },
+				};
+			}
+		}
+		return snapshot;
 	}
 
 	/**
@@ -597,9 +613,21 @@ export class BoundedAdviceDedupe {
 	restoreEntry(snapshot: AdviceDedupeSnapshot): void {
 		if (snapshot.entry === undefined) {
 			this.entries.delete(snapshot.key);
-			return;
+		} else {
+			this.entries.set(snapshot.key, snapshot.entry);
 		}
-		this.entries.set(snapshot.key, snapshot.entry);
+		const evicted = snapshot.evicted;
+		if (evicted === undefined || this.entries.has(evicted.key)) return;
+		// Re-insert the evicted oldest entry at the front: a plain `set` would move it to
+		// the newest position, making it survive far longer than the capacity allows.
+		const ordered: [string, AdviceDedupeEntryState][] = [
+			[evicted.key, evicted.entry],
+			...this.entries,
+		];
+		this.entries.clear();
+		for (const [existingKey, existingEntry] of ordered) {
+			this.entries.set(existingKey, existingEntry);
+		}
 	}
 
 	clear(): void {

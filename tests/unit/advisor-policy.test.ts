@@ -1518,3 +1518,21 @@ describe("Quality Slice Q5 dedupe rollback restoration", () => {
 		});
 	});
 });
+
+describe("BoundedAdviceDedupe capacity rollback", () => {
+	it("restores the entry evicted at capacity when a delivery rolls back", () => {
+		const dedupe = new BoundedAdviceDedupe(2);
+		const first = dedupeIdentity("First finding");
+		const second = dedupeIdentity("Second finding");
+		const third = dedupeIdentity("Third finding");
+		expect(dedupe.add(first)).toBe(true);
+		expect(dedupe.add(second)).toBe(true);
+		const snapshot = dedupe.snapshotEntry(third);
+		expect(dedupe.add(third)).toBe(true);
+		dedupe.restoreEntry(snapshot);
+		expect(dedupe.size).toBe(2);
+		// `add(third)` evicted the oldest entry (first); the rollback must bring it back.
+		expect(dedupe.add(first)).toBe(false);
+		expect(dedupe.add(third)).toBe(true);
+	});
+});
