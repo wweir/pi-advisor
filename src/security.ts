@@ -8,7 +8,6 @@ import {
 	createReadToolDefinition,
 	defineTool,
 	truncateHead,
-	type ExtensionContext,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -115,7 +114,6 @@ function hasBlockedDefault(path: string): boolean {
 	if (BLOCKED_FILE_NAMES.has(fileName)) return true;
 	if (BLOCKED_EXTENSIONS.some((extension) => fileName.endsWith(extension))) return true;
 	if (parts.some((part) => BLOCKED_DIRECTORY_NAMES.has(part))) return true;
-	if (parts.includes(".ssh") && fileName.startsWith("id_")) return true;
 	return BLOCKED_HOME_PATHS.some((protectedPath) => isWithin(path, protectedPath));
 }
 
@@ -613,5 +611,3 @@ export function createProtectedAdvisorTools(cwd: string, config: AdvisorConfig):
 export function isAdvisorReadOnlyTool(name: string): name is ReadOnlyToolName {
 	return name === "read" || name === "grep" || name === "find" || name === "ls";
 }
-
-export type AdvisorToolContext = ExtensionContext;
