@@ -8,6 +8,7 @@ import {
 	type AdvisorRuntime,
 } from "../../src/index.js";
 import { createSessionHarness } from "../fixtures/session-harness.js";
+import { runtimeInternals } from "../fixtures/runtime-internals.js";
 import {
 	createAdvisorProvider,
 	createPrimaryProvider,
@@ -317,6 +318,54 @@ describe.sequential("Slice 5A runtime configuration apply", () => {
 				paused: true,
 				pauseReason: "Advisor session token soft cap reached",
 				usage: { total: 5 },
+			});
+		} finally {
+			await harness.dispose();
+		}
+	});
+
+	it("clears tripwire streaks when reconfiguring unpauses a paused runtime", async () => {
+		const primary = createPrimaryProvider([{ content: [{ type: "text", text: "answer" }] }]);
+		const advisor = createAdvisorProvider([{ content: [] }]);
+		let runtime: AdvisorRuntime | undefined;
+		let hostContext: ExtensionContext | undefined;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [
+				{
+					name: "configuration-streak-context-probe",
+					factory: (pi) => {
+						pi.on("session_start", (_event, ctx) => {
+							hostContext = ctx;
+						});
+					},
+				},
+				{
+					name: "pi-advisor-under-test-streaks",
+					factory: createPiAdvisorExtension({
+						config: configFor(advisor),
+						hooks: { onRuntime: (value) => (runtime = value) },
+					}),
+				},
+			],
+			tools: [],
+			mode: "rpc",
+		});
+		try {
+			if (runtime === undefined || hostContext === undefined) {
+				throw new Error("Expected initialized Advisor runtime and host context");
+			}
+			const internals = runtimeInternals(runtime);
+			internals.status.paused = true;
+			internals.status.pauseReason = "Three consecutive Advisor updates failed. Last failure: x";
+			internals.status.consecutiveFailures = 3;
+			internals.status.consecutiveReviewTimeouts = 3;
+			await runtime.applyConfiguration(configFor(advisor), hostContext);
+			expect(runtime.getStatus()).toMatchObject({
+				paused: false,
+				consecutiveFailures: 0,
+				consecutiveReviewTimeouts: 0,
 			});
 		} finally {
 			await harness.dispose();

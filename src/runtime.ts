@@ -1591,6 +1591,11 @@ export class AdvisorRuntime {
 		);
 		this.status.paused = false;
 		delete this.status.pauseReason;
+		// Reconfiguring unpauses exactly like `/advisor on` with a budget reset, so clear the
+		// tripwire streaks too: otherwise the next single failure/timeout trips `>= 3` and
+		// re-pauses with a message claiming three consecutive failures just occurred.
+		this.status.consecutiveFailures = 0;
+		this.status.consecutiveReviewTimeouts = 0;
 		if (this.config.model === undefined) delete this.status.model;
 		else this.status.model = this.config.model;
 		delete this.status.modelName;
@@ -4060,7 +4065,10 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 				reviewId,
 				tag,
 			);
-			const supersedesNewerExecutorReview = dispatch === "followUp" && stale;
+			// Only a stale *review* note supersedes newer Executor evidence; a stale lower-priority
+			// memory suggestion must never discard a queued review (the active path already keeps it).
+			const supersedesNewerExecutorReview =
+				dispatch === "followUp" && stale && advice.intent === "review";
 			const supersededUpdate = supersedesNewerExecutorReview ? this.pendingUpdate : undefined;
 			if (supersededUpdate !== undefined) {
 				delete this.pendingUpdate;
