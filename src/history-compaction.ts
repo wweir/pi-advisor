@@ -181,7 +181,10 @@ interface SummaryLines {
 }
 
 function extractSummaryLines(updateText: string): SummaryLines {
-	const closeIndex = updateText.indexOf(`</${HISTORY_SUMMARY_TAG}>`);
+	// `lastIndexOf`, not `indexOf`: row text is model/executor-derived and may itself contain a
+	// literal close tag, which `indexOf` would treat as the end of the block and silently drop
+	// every carried row after it (destroying findingKeys the next compression can never recover).
+	const closeIndex = updateText.lastIndexOf(`</${HISTORY_SUMMARY_TAG}>`);
 	const headerEnd = updateText.indexOf("\n");
 	const inner =
 		headerEnd === -1 || closeIndex === -1 ? "" : updateText.slice(headerEnd + 1, closeIndex);
@@ -208,6 +211,15 @@ function extractSummaryLines(updateText: string): SummaryLines {
 	return { lines, coveredThrough: Number.isFinite(coveredThrough) ? coveredThrough : 0 };
 }
 
+/**
+ * Keep embedded row text from breaking the block framing: a literal close tag or an embedded
+ * newline would otherwise end the summary early or forge extra `[#N]` rows, corrupting the
+ * covered range on the next compression.
+ */
+function neutralizeSummaryRow(value: string): string {
+	return value.replaceAll(`</${HISTORY_SUMMARY_TAG}>`, " ").replace(/[\r\n]+/g, " ");
+}
+
 function cycleSummaryLine(cycle: HistoryCycle, ordinal: number, updateText: string): string {
 	const parts: string[] = [`[#${String(ordinal)}]`];
 	const userHead = firstBlockLine(updateText, "[Executor user]\n");
@@ -232,7 +244,7 @@ function cycleSummaryLine(cycle: HistoryCycle, ordinal: number, updateText: stri
 		.split("\n")
 		.find((line) => line.startsWith("Dropped beyond window:"));
 	if (breadcrumb !== undefined) parts.push(breadcrumb.slice(0, 200));
-	return parts.join(" | ").slice(0, 400);
+	return neutralizeSummaryRow(parts.join(" | ")).slice(0, 400);
 }
 
 export function compressAdvisorHistory(
