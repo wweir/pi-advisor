@@ -1573,6 +1573,7 @@ export class AdvisorRuntime {
 		this.pendingAdvice.clear();
 		this.activeAdvice.clear();
 		this.adviceDedupe.clear();
+		this.reviewSuppressions.clear();
 		this.restoredRecoveryPending = false;
 		this.status.activeNotesPending = 0;
 		this.status.restoredActiveReviewPending = false;
@@ -4756,6 +4757,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		this.status.restoredActiveDeliveriesPending = 0;
 		this.refreshDeferredAdviceStatus();
 		this.adviceDedupe.clear();
+		this.reviewSuppressions.clear();
 		await this.disposeNestedSession();
 		this.updateBacklogStatus();
 		this.persistState();
