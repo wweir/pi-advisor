@@ -1155,6 +1155,13 @@ export class AdvisorRuntime {
 	 * same drain's `finally` (via `armCadenceTimer`).
 	 */
 	private drainGeneration = 0;
+	/**
+	 * Set before `shutdown()` awaits anything so an in-flight `createNestedSession` that settles
+	 * during teardown disposes its fresh session instead of assigning it to a dead runtime.
+	 */
+	private shuttingDown = false;
+	/** The in-flight drain, awaited (bounded) during shutdown so it cannot resume on a disposed session. */
+	private drainPromise?: Promise<void>;
 	private disposed = false;
 	private projectContext = "";
 	private submittedProjectContext?: string;
@@ -2248,7 +2255,10 @@ export class AdvisorRuntime {
 			return;
 		}
 		try {
-			const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+			const auth = await this.boundedNestedSetup(
+				"advisor authentication",
+				ctx.modelRegistry.getApiKeyAndHeaders(model),
+			);
 			if (!this.activationStillCurrent(ctx, activationEpoch)) return;
 			if (!auth.ok) {
 				this.status.active = false;
@@ -2256,10 +2266,13 @@ export class AdvisorRuntime {
 				this.publishStatus();
 				return;
 			}
-			const resolved = await resolveAdvisorModelRuntime({
-				modelRegistry: ctx.modelRegistry,
-				model,
-			});
+			const resolved = await this.boundedNestedSetup(
+				"model runtime resolution",
+				resolveAdvisorModelRuntime({
+					modelRegistry: ctx.modelRegistry,
+					model,
+				}),
+			);
 			if (!this.activationStillCurrent(ctx, activationEpoch)) return;
 			let adviseSchemaMode: AdviseSchemaMode = "portable";
 			try {
@@ -2327,6 +2340,7 @@ export class AdvisorRuntime {
 		modelRuntime: ResolvedAdvisorModelRuntime["modelRuntime"],
 		adviseSchemaMode: AdviseSchemaMode,
 	): Promise<void> {
+		if (this.teardownRequested()) return;
 		await this.disposeNestedSession();
 		// Fresh nested session: no history to compress in this epoch.
 		const contextLimitTokens = advisorContextLimit(model, this.config);
@@ -2423,6 +2437,13 @@ export class AdvisorRuntime {
 			// assigned to this.session, so dispose it to release its provider connections and tools.
 			(late) => late.session.dispose(),
 		);
+		// `shutdown()` may have started while `createAgentSession` was in flight: the fresh session
+		// would otherwise be assigned to a dead runtime and never disposed (leaking its provider
+		// connections). Dispose it instead of assigning.
+		if (this.teardownRequested()) {
+			result.session.dispose();
+			return;
+		}
 		this.session = result.session;
 		this.status.adviseSchemaMode = adviseSchemaMode;
 		this.status.nestedExtensionCount = result.extensionsResult.extensions.length;
@@ -2448,13 +2469,19 @@ export class AdvisorRuntime {
 					run.adviseToolCalls++;
 					if (run.adviseToolCalls > HARD_LIMITS.maxToolCallsPerUpdate) {
 						run.governorFailure = "Advisor tool-call limit reached";
-						void this.session?.abort();
+						void this.session?.abort().then(
+							() => undefined,
+							() => undefined,
+						);
 					}
 				} else {
 					run.toolCalls++;
 					if (run.toolCalls > this.config.limits.maxToolCallsPerUpdate) {
 						run.governorFailure = "Advisor tool-call limit reached";
-						void this.session?.abort();
+						void this.session?.abort().then(
+							() => undefined,
+							() => undefined,
+						);
 					}
 				}
 			}
@@ -2526,7 +2553,10 @@ export class AdvisorRuntime {
 							.catch(() => undefined);
 					} else {
 						run.governorFailure = "Advisor turn limit reached";
-						void this.session?.abort();
+						void this.session?.abort().then(
+							() => undefined,
+							() => undefined,
+						);
 					}
 				}
 			}
@@ -2850,6 +2880,7 @@ export class AdvisorRuntime {
 	}
 
 	private enqueue(update: QueuedAdvisorUpdate): void {
+		if (this.teardownRequested()) return;
 		if (update.heldForMaterialTurn === true || update.heldForQuiescence === true) {
 			if (this.pendingUpdate === undefined) {
 				// A held update cannot submit on its own. Keep it waiting in
@@ -2886,7 +2917,7 @@ export class AdvisorRuntime {
 		}
 		this.draining = true;
 		const generation = ++this.drainGeneration;
-		void this.drain(update).catch((cause: unknown) => {
+		const running = this.drain(update).catch((cause: unknown) => {
 			// A rejected drain means runUpdate threw after claiming an active review. That claim can
 			// never reach its own terminal cleanup, so clear it here: otherwise status.reviewing stays
 			// true (the footer spinner never stops) and every later update re-adopts the stranded
@@ -2913,6 +2944,7 @@ export class AdvisorRuntime {
 			}
 			this.publishStatus();
 		});
+		this.drainPromise = running;
 	}
 
 	private coalescePending(
@@ -2991,7 +3023,10 @@ export class AdvisorRuntime {
 		const run = this.currentRun;
 		if (run === undefined || !this.inFlightReviewCanBeSuperseded()) return;
 		run.abortedForSupersession = true;
-		void this.session?.abort();
+		void this.session?.abort().then(
+			() => undefined,
+			() => undefined,
+		);
 	}
 
 	private async drain(initial: QueuedAdvisorUpdate): Promise<void> {
@@ -3168,6 +3203,15 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 			!this.status.paused &&
 			!this.disposed
 		);
+	}
+
+	/**
+	 * Whether teardown has begun or completed. A method call (unlike a direct field read) defeats
+	 * TypeScript's stale narrowing of `disposed`/`shuttingDown` across an `await`, so the guard can
+	 * run after async work without the linter treating it as always-false.
+	 */
+	private teardownRequested(): boolean {
+		return this.disposed || this.shuttingDown;
 	}
 
 	private async maintainContextPolicy(
@@ -4569,7 +4613,9 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 
 	private async waitForNestedAbort(session: AgentSession, timeoutMs: number): Promise<void> {
 		session.abortCompaction();
-		if (!session.isStreaming) return;
+		// `isStreaming` only tracks the agent run; a compacting session is not streaming yet is still
+		// busy, so use `isIdle` to also await compaction before dispose.
+		if (session.isIdle) return;
 		const aborting = session.abort().then(
 			() => undefined,
 			() => undefined,
@@ -4643,6 +4689,7 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 	}
 
 	private async replaceStuckNestedSession(): Promise<void> {
+		if (this.teardownRequested()) return;
 		const ctx = this.hostContext;
 		const model = this.model;
 		const modelRuntime = this.nestedModelRuntime;
@@ -4717,6 +4764,9 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 
 	async shutdown(): Promise<void> {
 		if (this.disposed) return;
+		// Set before the first await so an in-flight drain that settles during teardown disposes its
+		// fresh nested session instead of reviving a dead runtime.
+		this.shuttingDown = true;
 		this.clearAdviseExecutionMarkers();
 		this.status.epoch++;
 		this.status.enabled = false;
@@ -4726,6 +4776,18 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 		this.clearCadenceTimer();
 		delete this.automaticMemoryFollowUpDeliveryId;
 		delete this.automaticReviewFollowUpDeliveryId;
+		// Capture the in-flight drain before aborting: aborting lets it unwind, but its `finally` may
+		// arm a timer that starts (and replaces) a drain, which must not mask the original.
+		const inflightDrain = this.drainPromise;
+		try {
+			// Abort the nested run first so the in-flight drain unwinds before the session is disposed.
+			await this.abortNestedWork();
+		} catch {
+			// An abort hook that throws must not skip the rest of teardown.
+		}
+		if (inflightDrain !== undefined) {
+			await this.settleBackground(inflightDrain, this.config.limits.maxLifecycleAbortMs);
+		}
 		await this.disposeNestedSession();
 		this.persistState();
 		this.disposed = true;
