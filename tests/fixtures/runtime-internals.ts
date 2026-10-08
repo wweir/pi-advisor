@@ -84,6 +84,9 @@ export interface AdvisorRuntimeTestInternals {
 	cadenceTimer?: ReturnType<typeof setTimeout>;
 	lastReviewSubmittedTurn?: number;
 	draining: boolean;
+	drainPromise?: Promise<void>;
+	shuttingDown: boolean;
+	disposed: boolean;
 	currentRun?: CurrentRun;
 	pendingAdvice: BoundedKeyedByteFifo<PendingAdvice>;
 	activeAdvice: BoundedKeyedByteFifo<OutstandingAdvice>;
@@ -111,6 +114,8 @@ export interface AdvisorRuntimeTestInternals {
 	): AdviceDelivery | undefined;
 	updateBacklogStatus(): void;
 	boundedNestedSetup<T>(step: string, task: Promise<T>): Promise<T>;
+	waitForNestedAbort(session: AgentSession, timeoutMs: number): Promise<void>;
+	createNestedSession(...args: unknown[]): Promise<void>;
 }
 
 /** Bind a hand-built recovery fixture to the exact prompt of the test session. */

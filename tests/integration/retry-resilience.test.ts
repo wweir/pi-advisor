@@ -1,4 +1,4 @@
-import type { InlineExtension } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, InlineExtension } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -724,6 +724,100 @@ describe.sequential("Slice 3B retry lifecycle resilience", () => {
 			await harness.session.prompt("trigger a review that cannot continue");
 			await waitFor(() => !internals.draining && internals.activeReview === undefined);
 			expect(activeRuntime.getStatus()).toMatchObject({ active: false, reviewing: false });
+		} finally {
+			await harness.dispose();
+		}
+	});
+
+	it("awaits a non-streaming but busy (compacting) nested session before dispose", async () => {
+		const primary = createPrimaryProvider([{ content: [{ type: "text", text: "answer" }] }]);
+		const advisor = createAdvisorProvider([{ content: [] }]);
+		let runtime: AdvisorRuntime | undefined;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [extensionFor(configFor(advisor), (value) => (runtime = value))],
+			tools: [],
+			mode: "rpc",
+		});
+		try {
+			if (runtime === undefined) throw new Error("Expected Advisor runtime");
+			const internals = runtimeInternals(runtime);
+			let abortCalled = false;
+			// SAFETY: test stub exposing only the AgentSession members waitForNestedAbort reads.
+			const busy = {
+				isStreaming: false,
+				isIdle: false,
+				isCompacting: true,
+				abortCompaction: () => undefined,
+				abort: () => {
+					abortCalled = true;
+					return new Promise<void>((resolve) => setTimeout(resolve, 20));
+				},
+			} as AgentSession;
+			await internals.waitForNestedAbort(busy, 1_000);
+			expect(abortCalled).toBe(true);
+		} finally {
+			await harness.dispose();
+		}
+	});
+
+	it("shutdown bounds an in-flight review drain instead of hanging", async () => {
+		const primary = createPrimaryProvider([
+			{ content: [{ type: "text", text: "executor answer" }] },
+		]);
+		const blocked = createBarrier();
+		const advisor = createAdvisorProvider([{ content: [], waitFor: blocked.promise }]);
+		const config = configFor(advisor);
+		config.limits.minTurnsBetweenReviews = 1;
+		config.limits.minIntervalMs = 0;
+		config.limits.maxLifecycleAbortMs = 50;
+		let runtime: AdvisorRuntime | undefined;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [extensionFor(config, (value) => (runtime = value))],
+			tools: [],
+			mode: "rpc",
+		});
+		try {
+			if (runtime === undefined) throw new Error("Expected Advisor runtime");
+			const activeRuntime = runtime;
+			const internals = runtimeInternals(activeRuntime);
+			await harness.session.prompt("trigger a review that blocks");
+			await waitFor(
+				() => internals.activeReview !== undefined && internals.drainPromise !== undefined,
+			);
+			// Shutdown must abort the run and bound the drain wait, so it always resolves.
+			await expect(activeRuntime.shutdown()).resolves.toBeUndefined();
+			expect(activeRuntime.getStatus()).toMatchObject({ enabled: false, active: false });
+			expect(internals.disposed).toBe(true);
+		} finally {
+			blocked.release();
+			await harness.dispose();
+		}
+	});
+
+	it("does not create a nested session after shutdown", async () => {
+		const primary = createPrimaryProvider([{ content: [{ type: "text", text: "answer" }] }]);
+		const advisor = createAdvisorProvider([{ content: [] }]);
+		let runtime: AdvisorRuntime | undefined;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [extensionFor(configFor(advisor), (value) => (runtime = value))],
+			tools: [],
+			mode: "rpc",
+		});
+		try {
+			if (runtime === undefined) throw new Error("Expected Advisor runtime");
+			const activeRuntime = runtime;
+			const internals = runtimeInternals(activeRuntime);
+			await activeRuntime.shutdown();
+			// Dummy args would throw (and could assign a session) without the disposed/shuttingDown guard.
+			await expect(internals.createNestedSession({}, {}, {}, "portable")).resolves.toBeUndefined();
+			expect(internals.session).toBeUndefined();
+			expect(internals.shuttingDown).toBe(true);
 		} finally {
 			await harness.dispose();
 		}
