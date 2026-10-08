@@ -1,3 +1,4 @@
+import { isContentFreeAdvice } from "./advice.js";
 import { truncateUtf8Bytes } from "./redaction.js";
 import { isRecordValue, isStringValue } from "./value-guards.js";
 
@@ -84,6 +85,14 @@ interface UnvalidatedOutcomeRecord {
 	advised?: unknown;
 }
 
+/** Unvalidated `advise` tool-call arguments shape. */
+interface UnvalidatedAdviseCallArguments {
+	note?: unknown;
+	intent?: unknown;
+	severity?: unknown;
+	findingKey?: unknown;
+}
+
 function contentToText(content: Parameters<typeof isRecordValue>[0]): string {
 	if (isStringValue(content)) return content;
 	if (!Array.isArray(content)) return "";
@@ -135,6 +144,40 @@ function adviseOutcomeLine(contentText: string): string | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+/**
+ * Derive the summary line from the assistant `advise` tool-call arguments.
+ *
+ * This is the production path. The advise tool returns a plain `Recorded.`
+ * tool result (src/advice.ts), so `adviseOutcomeLine` can never match real
+ * nested-session history; the accepted call's arguments are the only place the
+ * findingKey/note survive in the transcript. Rejected calls (memory suggestion
+ * or content-free note) are skipped, mirroring the emission guards.
+ */
+function adviseCallLine(content: Parameters<typeof isRecordValue>[0]): string | undefined {
+	if (!Array.isArray(content)) return undefined;
+	let line: string | undefined;
+	// SAFETY: the array check narrows content to an array of unvalidated parts.
+	for (const part of content as unknown[]) {
+		if (!isRecordValue<UnvalidatedContentPart>(part)) continue;
+		if (part.type !== "toolCall" || part.name !== "advise") continue;
+		if (!isRecordValue<UnvalidatedAdviseCallArguments>(part.arguments)) continue;
+		const args = part.arguments;
+		if (args.intent === "memory-suggestion") continue;
+		const note = isStringValue(args.note) ? args.note.trim() : "";
+		if (note.length === 0 || isContentFreeAdvice(note)) continue;
+		const parts = ["advise advised=true"];
+		if (isStringValue(args.findingKey) && args.findingKey.length > 0) {
+			parts.push(`findingKey=${args.findingKey}`);
+		}
+		if (isStringValue(args.severity) && args.severity.length > 0) {
+			parts.push(`severity=${args.severity}`);
+		}
+		parts.push(`note: "${note.slice(0, LINE_NOTE_HEAD_CHARS)}"`);
+		line = parts.join(" ");
+	}
+	return line;
 }
 
 function splitCycles(messages: readonly AdvisorHistoryMessage[]): HistoryCycle[] {
@@ -292,8 +335,15 @@ export function compressAdvisorHistory(
 				index2++
 			) {
 				const message = messages[index2];
-				if (message?.role !== "toolResult") continue;
-				const line = adviseOutcomeLine(contentToText(message.content));
+				if (message === undefined) continue;
+				// Production stores the accepted call's arguments on the assistant
+				// message; the JSON tool-result form is kept for experiment fixtures.
+				const line =
+					message.role === "toolResult"
+						? adviseOutcomeLine(contentToText(message.content))
+						: message.role === "assistant"
+							? adviseCallLine(message.content)
+							: undefined;
 				if (line !== undefined) adviseLines.push(line);
 			}
 			cycle.adviseLines = adviseLines;

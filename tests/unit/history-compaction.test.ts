@@ -105,6 +105,35 @@ describe("compressAdvisorHistory", () => {
 		]);
 	});
 
+	it("extracts the advise outcome from the production assistant tool call, not the Recorded. result", () => {
+		const messages = [
+			userUpdate("[Executor user]\nfix the login bug"),
+			{
+				role: "assistant",
+				content: [
+					{
+						type: "toolCall",
+						name: "advise",
+						arguments: {
+							note: "race condition in session cache guard",
+							severity: "blocker",
+							findingKey: "auth-race",
+						},
+					},
+				],
+			},
+			{ role: "toolResult", content: [{ type: "text", text: "Recorded." }] },
+			userUpdate("[Executor user]\nsecond instruction"),
+			{ role: "toolResult", content: [{ type: "text", text: "Recorded." }] },
+			userUpdate("[Executor user]\nthird instruction"),
+		];
+		const result = compressAdvisorHistory(messages, { keepRecentCycles: 1 });
+		const summary = isString(result.messages[0]?.content);
+		expect(summary).toContain("findingKey=auth-race");
+		expect(summary).toContain("severity=blocker");
+		expect(summary).toContain('note: "race condition in session cache guard"');
+	});
+
 	it("carries unresolved error-register lines and breadcrumbs into the summary", () => {
 		const updateText = [
 			"[Executor tool result bash error]",
