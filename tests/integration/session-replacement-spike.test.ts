@@ -47,7 +47,7 @@ function acceptedAdvice(note: string) {
 	};
 }
 
-describe("Pi 0.81.1 session replacement spike", () => {
+describe("Pi 1.0 session replacement spike", () => {
 	it("shuts down the old extension instance before rebinding a replacement session", async () => {
 		const lifecycle: string[] = [];
 		let root: string | undefined;
