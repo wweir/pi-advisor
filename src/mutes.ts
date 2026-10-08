@@ -334,11 +334,6 @@ export class MuteStore {
 	}
 
 	/**
-	 * Loads the mutes file. A missing file is the normal first-run state and
-	 * yields an empty store. A malformed or oversized file yields an error plus
-	 * an empty store; the malformed file is never overwritten.
-	 */
-	/**
 	 * Current raw file content as a fingerprint, or an empty string when the
 	 * file is missing. Used by the freshness check before a rename.
 	 */
@@ -350,6 +345,11 @@ export class MuteStore {
 		}
 	}
 
+	/**
+	 * Loads the mutes file. A missing file is the normal first-run state and
+	 * yields an empty store. A malformed or oversized file yields an error plus
+	 * an empty store; the malformed file is never overwritten.
+	 */
 	static async load(
 		path: string,
 	): Promise<{ store: MuteStore; error?: string; fingerprint?: string }> {
