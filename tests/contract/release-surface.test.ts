@@ -158,8 +158,11 @@ describe("public release surface", () => {
 			for (const fixture of cases) {
 				writeFileSync(join(root, "package.json"), JSON.stringify(fixture.manifest));
 				writeFileSync(join(root, "pack.json"), JSON.stringify(fixture.pack));
+				// Run the validator with the runtime that runs this suite (Node >=22 strips TS, Bun runs
+				// it natively). Going through the PATH-resolved `.bin/tsx` shim instead would depend on
+				// whatever `node` happens to be first on PATH.
 				const result = spawnSync(
-					join(process.cwd(), "node_modules", ".bin", "tsx"),
+					process.execPath,
 					[join(process.cwd(), "scripts", "validate-pack.ts"), "pack.json"],
 					{ cwd: root, encoding: "utf8", timeout: 10_000 },
 				);
@@ -211,7 +214,7 @@ describe("public release surface", () => {
 				});
 				expect(archive.status).toBe(0);
 				const result = spawnSync(
-					join(process.cwd(), "node_modules", ".bin", "tsx"),
+					process.execPath,
 					[join(process.cwd(), "scripts", "validate-pack.ts"), "pack.json"],
 					{ cwd: root, encoding: "utf8", timeout: 10_000 },
 				);
