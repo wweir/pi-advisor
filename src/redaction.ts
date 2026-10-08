@@ -9,6 +9,9 @@ export const REDACTION = "[REDACTED]";
 
 const PATTERNS: RegExp[] = [
 	/-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----[\s\S]*?-----END(?: [A-Z0-9]+)? PRIVATE KEY-----/g,
+	// Unterminated key block (e.g. truncated text): redact from the opener to end of input rather
+	// than leaving raw key material that the paired pattern above cannot match.
+	/-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----[\s\S]*/g,
 	/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi,
 	/\b(?:sk|pk|api|key|token)-[A-Za-z0-9_-]{12,}\b/g,
 	/\b(?:ghp|github_pat|glpat|xox[baprs]|AKIA|ASIA)[A-Za-z0-9_-]{8,}\b/g,
@@ -16,7 +19,7 @@ const PATTERNS: RegExp[] = [
 	/(\b(?:[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS)|KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS)\s*=\s*)(["'])((?:\\.|(?!\2)[^\\\r\n])*)\2/g,
 	/(["']?(?:api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|password|passwd|secret)["']?\s*[:=]\s*)[^\s,"';}]{4,}/gi,
 	/(\b(?:[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS)|KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS)\s*=\s*)[^\s]+/g,
-	/(https?:\/\/[^\s/:]+:)[^@\s]+@/gi,
+	/(https?:\/\/[^\s/:]+:)[^@\s]+(?=@)/gi,
 ];
 
 export function redactSecrets(input: string): RedactionResult {
