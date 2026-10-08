@@ -1695,4 +1695,21 @@ describe("Quality Slice Q6 legacy programmatic configuration (verified defect fi
 			HARD_LIMITS.maxReviewAttemptMs,
 		);
 	});
+
+	it("strips terminal control characters from untrusted project field names", () => {
+		const notify = vi.fn();
+		const ctx = commandContext({ hasUI: true, ui: commandUi({ notify }) });
+		publishConfigurationWarnings(ctx, [
+			{
+				source: "project",
+				path: ".pi/WATCHDOG.yml",
+				message: "Project field \u001b[31mPWNED\u001b[0m is not permitted and was ignored.",
+			},
+		]);
+		expect(notify).toHaveBeenCalledTimes(1);
+		// SAFETY: `notify` is the vi.fn installed above; the combined warning is its first call's first argument.
+		const [message] = notify.mock.calls[0] as [string, string];
+		expect(message).not.toContain("\u001b");
+		expect(message).toContain("PWNED");
+	});
 });

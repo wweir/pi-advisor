@@ -35,6 +35,7 @@ import {
 	type AdvisorRuntimeHooks,
 } from "./runtime.js";
 import { isHexPrefix, shortestUniquePrefixes } from "./mutes.js";
+import { sanitizeTerminalText } from "./redaction.js";
 
 export interface PiAdvisorExtensionOptions {
 	config?: AdvisorConfig;
@@ -49,7 +50,11 @@ export function publishConfigurationWarnings(
 ): void {
 	if (!ctx.hasUI || warnings.length === 0) return;
 	// F14: one combined notify with one line per warning instead of per-warning notifies.
-	ctx.ui.notify(warnings.map((warning) => warning.message).join("\n"), "warning");
+	// Project-config field names are untrusted text; sanitize before they reach the TUI.
+	ctx.ui.notify(
+		warnings.map((warning) => sanitizeTerminalText(warning.message)).join("\n"),
+		"warning",
+	);
 }
 
 export const CONFIGURATION_REFERENCE =
