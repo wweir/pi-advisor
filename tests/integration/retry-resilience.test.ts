@@ -11,6 +11,7 @@ import {
 	type AdvisorConfig,
 	type AdvisorRuntime,
 	type AdvisorRuntimeHooks,
+	type PersistedAdvisorActiveReview,
 	type PersistedAdvisorRuntimeState,
 } from "../../src/index.js";
 import { runtimeInternals } from "../fixtures/runtime-internals.js";
@@ -610,6 +611,120 @@ describe.sequential("Slice 3B retry lifecycle resilience", () => {
 			});
 		} finally {
 			providerBarrier.release();
+			await harness.dispose();
+		}
+	});
+
+	it("clears a stranded active claim and stops reviewing when the drain rejects", async () => {
+		const primary = createPrimaryProvider([
+			{ content: [{ type: "text", text: "first executor answer" }] },
+			{ content: [{ type: "text", text: "second executor answer" }] },
+		]);
+		const advisor = createAdvisorProvider([{ content: [] }]);
+		const config = configFor(advisor);
+		config.limits.minTurnsBetweenReviews = 1;
+		config.limits.minIntervalMs = 0;
+		let runtime: AdvisorRuntime | undefined;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [extensionFor(config, (value) => (runtime = value))],
+			tools: [],
+			mode: "rpc",
+		});
+		try {
+			if (runtime === undefined) throw new Error("Expected Advisor runtime");
+			const activeRuntime = runtime;
+			const internals = runtimeInternals(activeRuntime);
+			const stranded: PersistedAdvisorActiveReview = {
+				text: "STRANDED-CLAIM-EVIDENCE",
+				entryCount: 1,
+				truncated: false,
+				window: { expectedIndex: 0 },
+				turnNumber: 1,
+				reviewId: "stranded-review-id",
+				restoredReplayCount: 0,
+				successfulMemoryTexts: [],
+			};
+			// Force the claim-setup throw the fix targets: runUpdate claims a review and then rejects.
+			Reflect.set(activeRuntime, "runUpdate", () => {
+				internals.activeReview = stranded;
+				return Promise.reject(new Error("drain rejection after claim setup"));
+			});
+			await harness.session.prompt("trigger a review whose drain rejects");
+			await waitFor(() => !internals.draining && internals.activeReview === undefined);
+			expect(activeRuntime.getStatus()).toMatchObject({
+				reviewing: false,
+				failedReviews: 1,
+				lastFailure: "drain rejection after claim setup",
+			});
+
+			// The cleared claim must not block later work: a real review now runs and completes.
+			Reflect.deleteProperty(activeRuntime, "runUpdate");
+			await harness.session.prompt("trigger a real review after the stranded claim");
+			await waitFor(() => activeRuntime.getStatus().reviewsCompleted >= 1);
+			expect(internals.activeReview).toBeUndefined();
+			expect(activeRuntime.getStatus().reviewing).toBe(false);
+		} finally {
+			await harness.dispose();
+		}
+	});
+
+	it("bounds a hung nested-session setup step and fails closed", async () => {
+		const primary = createPrimaryProvider([{ content: [{ type: "text", text: "answer" }] }]);
+		const advisor = createAdvisorProvider([{ content: [] }]);
+		const config = configFor(advisor);
+		config.limits.maxNestedCompactionMs = 30;
+		let runtime: AdvisorRuntime | undefined;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [extensionFor(config, (value) => (runtime = value))],
+			tools: [],
+			mode: "rpc",
+		});
+		try {
+			if (runtime === undefined) throw new Error("Expected Advisor runtime");
+			const internals = runtimeInternals(runtime);
+			const never = new Promise<never>(() => undefined);
+			await expect(internals.boundedNestedSetup("test step", never)).rejects.toThrow(
+				"Advisor nested session setup timed out during test step",
+			);
+		} finally {
+			await harness.dispose();
+		}
+	});
+
+	it("clears a stranded claim when the context policy cannot continue", async () => {
+		const primary = createPrimaryProvider([{ content: [{ type: "text", text: "answer" }] }]);
+		const advisor = createAdvisorProvider([{ content: [] }]);
+		const config = configFor(advisor);
+		config.limits.minTurnsBetweenReviews = 1;
+		config.limits.minIntervalMs = 0;
+		let runtime: AdvisorRuntime | undefined;
+		const harness = await createSessionHarness({
+			provider: primary,
+			advisorProvider: advisor,
+			extensions: [extensionFor(config, (value) => (runtime = value))],
+			tools: [],
+			mode: "rpc",
+		});
+		try {
+			if (runtime === undefined) throw new Error("Expected Advisor runtime");
+			const activeRuntime = runtime;
+			const internals = runtimeInternals(activeRuntime);
+			// A failed nested-session recovery leaves the claim held while context policy returns
+			// undefined and the runtime goes inactive: runUpdate returns normally, so the enqueue
+			// rejection handler never runs and the claim would otherwise strand forever.
+			Reflect.set(activeRuntime, "maintainContextPolicy", () => {
+				Reflect.deleteProperty(activeRuntime, "session");
+				internals.status.active = false;
+				return Promise.resolve(undefined);
+			});
+			await harness.session.prompt("trigger a review that cannot continue");
+			await waitFor(() => !internals.draining && internals.activeReview === undefined);
+			expect(activeRuntime.getStatus()).toMatchObject({ active: false, reviewing: false });
+		} finally {
 			await harness.dispose();
 		}
 	});

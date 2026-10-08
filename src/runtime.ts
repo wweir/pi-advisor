@@ -1149,6 +1149,12 @@ export class AdvisorRuntime {
 	private lastMemorySuggestionTurn?: number;
 	private lastMemorySuggestionAt?: number;
 	private draining = false;
+	/**
+	 * Monotonic token identifying the in-flight drain. A late rejection only releases the
+	 * claim of its own generation, so it can never wipe a newer claim started from the
+	 * same drain's `finally` (via `armCadenceTimer`).
+	 */
+	private drainGeneration = 0;
 	private disposed = false;
 	private projectContext = "";
 	private submittedProjectContext?: string;
@@ -2282,6 +2288,34 @@ export class AdvisorRuntime {
 		this.publishStatus();
 	}
 
+	/**
+	 * Bounds one nested-session setup step so a hung resource load or session factory cannot stall
+	 * the review drain forever (which would strand activeReview and spin the footer indicator). On
+	 * timeout the abandoned task is detached and a bounded error is thrown so the caller fails closed
+	 * and reaches its own terminal claim cleanup.
+	 */
+	private async boundedNestedSetup<T>(
+		step: string,
+		task: Promise<T>,
+		onLateSettle?: (value: T) => void,
+	): Promise<T> {
+		const raced = await raceTimeout(task, this.config.limits.maxNestedCompactionMs);
+		if (raced.status === "timeout") {
+			void task.then(
+				(value) => {
+					try {
+						onLateSettle?.(value);
+					} catch {
+						// Best-effort orphan cleanup; a late settle must never surface as an unhandled rejection.
+					}
+				},
+				() => undefined,
+			);
+			throw new Error(`Advisor nested session setup timed out during ${step}`);
+		}
+		return raced.value;
+	}
+
 	private async createNestedSession(
 		ctx: ExtensionContext,
 		model: Model<Api>,
@@ -2332,7 +2366,7 @@ export class AdvisorRuntime {
 				),
 			appendSystemPromptOverride: () => [],
 		});
-		await resourceLoader.reload();
+		await this.boundedNestedSetup("resource load", resourceLoader.reload());
 		const protectedTools = createProtectedAdvisorTools(ctx.cwd, this.config);
 		for (const tool of protectedTools) {
 			const execute = tool.execute.bind(tool);
@@ -2366,18 +2400,24 @@ export class AdvisorRuntime {
 			}),
 		];
 		const activeTools = [...this.config.tools, "advise"];
-		const result = await createAgentSession({
-			cwd: ctx.cwd,
-			agentDir: getAgentDir(),
-			model,
-			thinkingLevel: this.config.effort,
-			modelRuntime,
-			settingsManager,
-			resourceLoader,
-			sessionManager: SessionManager.inMemory(ctx.cwd),
-			customTools,
-			tools: activeTools,
-		});
+		const result = await this.boundedNestedSetup(
+			"session creation",
+			createAgentSession({
+				cwd: ctx.cwd,
+				agentDir: getAgentDir(),
+				model,
+				thinkingLevel: this.config.effort,
+				modelRuntime,
+				settingsManager,
+				resourceLoader,
+				sessionManager: SessionManager.inMemory(ctx.cwd),
+				customTools,
+				tools: activeTools,
+			}),
+			// A session that materializes only after the setup timeout is an orphan: it is never
+			// assigned to this.session, so dispose it to release its provider connections and tools.
+			(late) => late.session.dispose(),
+		);
 		this.session = result.session;
 		this.status.adviseSchemaMode = adviseSchemaMode;
 		this.status.nestedExtensionCount = result.extensionsResult.extensions.length;
@@ -2840,11 +2880,31 @@ export class AdvisorRuntime {
 			return;
 		}
 		this.draining = true;
+		const generation = ++this.drainGeneration;
 		void this.drain(update).catch((cause: unknown) => {
-			if (!this.disposed && this.status.enabled) {
-				const reason = boundedReason(cause);
-				this.recordAttemptFailure(reason);
-				this.recordFailedUpdate(reason);
+			// A rejected drain means runUpdate threw after claiming an active review. That claim can
+			// never reach its own terminal cleanup, so clear it here: otherwise status.reviewing stays
+			// true (the footer spinner never stops) and every later update re-adopts the stranded
+			// reviewId, re-emitting review-start with no review-outcome forever. The generation guard
+			// keeps this from discarding a fresh claim another drain already started and persisted.
+			if (this.drainGeneration === generation) {
+				delete this.activeReview;
+				this.status.restoredActiveReviewPending = false;
+			}
+			try {
+				if (!this.disposed && this.status.enabled) {
+					const reason = boundedReason(cause);
+					this.recordAttemptFailure(reason);
+					this.recordFailedUpdate(reason);
+				}
+			} catch {
+				// Failure bookkeeping (and its persistence) must never mask the cleared claim; the
+				// publish below is what actually stops the footer indicator.
+			}
+			try {
+				if (!this.disposed) this.persistState();
+			} catch {
+				// The drained update already failed; a persistence failure must not skip publishStatus.
 			}
 			this.publishStatus();
 		});
@@ -3375,8 +3435,25 @@ The proposed memory text must be exact, durable, safe, and independently useful 
 
 		const maintenance = await this.maintainContextPolicy(session, submittedPrompt, update.window);
 		session = this.session;
-		if (session === undefined || maintenance === undefined || !this.updateCanContinue(session))
+		if (maintenance === undefined) {
+			// A failed nested-session recovery leaves `status.active = false` while the claim is still
+			// held, so runUpdate returns *normally*: drain then breaks on `activeReview` and the promise
+			// resolves, meaning the enqueue rejection handler never runs. Release the claim here or the
+			// footer spinner and the re-adopted reviewId strand forever. A pause/disable keeps its claim
+			// on purpose, so only the orphaned (inactive or session-gone) case is cleaned up.
+			if (!this.disposed && (this.session === undefined || !this.status.active)) {
+				persistOutcome(
+					{ outcome: "failed", reason: "Advisor nested session could not continue" },
+					"context-policy-unavailable",
+				);
+				if (this.activeReviewMatches(reviewId)) delete this.activeReview;
+				this.status.restoredActiveReviewPending = false;
+				this.persistState();
+				this.publishStatus();
+			}
 			return;
+		}
+		if (session === undefined || !this.updateCanContinue(session)) return;
 		if ("freshContextFailure" in maintenance) {
 			persistOutcome(
 				{ outcome: "failed", reason: maintenance.freshContextFailure },

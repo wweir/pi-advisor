@@ -110,6 +110,7 @@ export interface AdvisorRuntimeTestInternals {
 		reviewId: string,
 	): AdviceDelivery | undefined;
 	updateBacklogStatus(): void;
+	boundedNestedSetup<T>(step: string, task: Promise<T>): Promise<T>;
 }
 
 /** Bind a hand-built recovery fixture to the exact prompt of the test session. */
